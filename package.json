@@ -1,0 +1,38 @@
+{
+    "name": "project-setup-wizard",
+    "version": "1.0.0",
+    "description": "An elegant project setup wizard for creating modern development environments with Devbox, Nx, AI assistants, and Docker",
+    "main": "wizard.js",
+    "bin": {
+      "project-wizard": "./wizard.js",
+      "setup-project": "./wizard.js"
+    },
+    "scripts": {
+      "start": "node wizard.js",
+      "test": "echo \"Tests to be implemented\" && exit 0"
+    },
+    "keywords": [
+      "project-setup",
+      "wizard",
+      "devbox",
+      "nx",
+      "gemini-cli",
+      "claude-code",
+      "docker",
+      "development-environment"
+    ],
+    "author": "Sandor Csete",
+    "license": "MIT",
+    "engines": {
+      "node": ">=22.0.0"
+    },
+    "preferGlobal": true,
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/alexislander/project-setup-wizard.git"
+    },
+    "bugs": {
+      "url": "https://github.com/alexislander/project-setup-wizard/issues"
+    },
+    "homepage": "https://github.com/alexislander/project-setup-wizard#readme"
+  }

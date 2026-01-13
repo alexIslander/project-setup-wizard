@@ -1,2 +1,9 @@
 .DS_Store
 node_modules/
+nx-preset-angular
+nx-preset-dotnet
+nx-preset-java
+nx-preset-node
+nx-preset-react
+nx-preset-typescript
+nx-preset-vue

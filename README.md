@@ -5,7 +5,7 @@ An interactive CLI that scaffolds modern project environments with Devbox, optio
 ## Features
 - Guided prompts for project type, language, tooling, and deployment targets.
 - Generates Devbox shell config plus optional Nx workspace scaffolding.
-- Optional AI assistant configs (`.gemini.json` or `.claude.json`).
+- Optional AI assistant configs (`.gemini.json`, `.claude.json`, or `.codex.json`).
 - Optional Dockerfile and `docker-compose.yml` for local dev.
 
 ## Requirements
@@ -13,8 +13,8 @@ An interactive CLI that scaffolds modern project environments with Devbox, optio
 
 ## Quick Start
 ```bash
-npm install
-npm start
+pnpm install
+pnpm start
 ```
 
 ## CLI Usage
@@ -22,7 +22,7 @@ npm start
 node wizard.js
 
 # Or install locally and use the bin name
-npm install -g .
+pnpm add -g .
 project-wizard
 ```
 
@@ -33,10 +33,11 @@ project-wizard
 - `scripts/` with helper commands and AI CLI installers.
 
 ## Documentation
-- `docs/kiss-project-templates.md`
+- [`docs/how-wizard-works.md`](docs/how-wizard-works.md) - Detailed explanation of the wizard's architecture and flow
+- [`docs/kiss-project-templates.md`](docs/kiss-project-templates.md) - Project template guidelines
 
 ## Development
-- `npm test` is currently a stub and does not run tests.
+- `pnpm test` is currently a stub and does not run tests.
 
 ## License
 MIT

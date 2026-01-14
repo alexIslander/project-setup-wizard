@@ -5,6 +5,25 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
+const PRESET_FLAG_MAP = {
+  angular: { nxPreset: 'Angular', language: 'JavaScript/TypeScript' },
+  react: { nxPreset: 'React', language: 'JavaScript/TypeScript' },
+  vue: { nxPreset: 'Vue', language: 'JavaScript/TypeScript' },
+  node: { nxPreset: 'Node', language: 'JavaScript/TypeScript' },
+  typescript: { nxPreset: 'TypeScript', language: 'JavaScript/TypeScript' },
+  java: { nxPreset: 'Java', language: 'Java (Spring Boot/Quarkus)' },
+  dotnet: { nxPreset: '.NET', language: '.NET' }
+};
+
+const PROJECT_TYPE_FLAG_MAP = {
+  'web-app': 'Web app',
+  'cli-tool': 'CLI tool',
+  library: 'Library',
+  'api-service': 'API service',
+  'mobile-app': 'Mobile app',
+  other: 'Other'
+};
+
 class ProjectWizard {
   constructor() {
     this.rl = readline.createInterface({
@@ -12,6 +31,7 @@ class ProjectWizard {
       output: process.stdout
     });
     this.answers = {};
+    this.cliConfig = this.parseCliOptions(process.argv.slice(2));
   }
 
   async ask(question, options = null, defaultValue = null) {
@@ -42,9 +62,263 @@ class ProjectWizard {
            (answer === '' && defaultAnswer === 'yes');
   }
 
+  normalizeOptionAnswer(answer, options) {
+    const index = parseInt(answer, 10) - 1;
+    if (!Number.isNaN(index) && index >= 0 && index < options.length) {
+      return options[index];
+    }
+    return answer;
+  }
+
+  getExpectedCommands() {
+    return (this.answers.expectedCommands || '').split(',').map(cmd => cmd.trim());
+  }
+
+  getLanguageProfile() {
+    const language = this.answers.language || '';
+    return {
+      language,
+      isJsTs: language.includes('JavaScript') || language.includes('TypeScript'),
+      isPython: language.includes('Python'),
+      isRust: language.includes('Rust'),
+      isJava: this.isJavaLanguage(),
+      isDotnet: language.includes('.NET')
+    };
+  }
+
+  parseCliOptions(args) {
+    const flags = new Set();
+    let projectName = null;
+    let dockerOverride = null;
+    let dbOverride = null;
+    let githubUser = null;
+
+    for (let i = 0; i < args.length; i += 1) {
+      const arg = args[i];
+      if (arg === '-h') {
+        flags.add('h');
+        continue;
+      }
+      if (!arg.startsWith('--')) {
+        continue;
+      }
+
+      const [rawKey, rawValue] = arg.slice(2).split('=');
+      const key = rawKey.toLowerCase();
+
+      if (key === 'name' || key === 'project-name') {
+        let value = rawValue;
+        if (!value) {
+          const next = args[i + 1];
+          if (next && !next.startsWith('-')) {
+            value = next;
+            i += 1;
+          }
+        }
+        if (!value) {
+          console.error('❌ Please provide a project name after --name.');
+          process.exit(1);
+        }
+        projectName = value.trim();
+        continue;
+      }
+
+      if (key === 'user' || key === 'github-user') {
+        let value = rawValue;
+        if (!value) {
+          const next = args[i + 1];
+          if (next && !next.startsWith('-')) {
+            value = next;
+            i += 1;
+          }
+        }
+        if (!value) {
+          console.error('❌ Please provide a GitHub username after --user.');
+          process.exit(1);
+        }
+        githubUser = value.trim();
+        continue;
+      }
+
+      if (key === 'docker') {
+        if (dockerOverride === false) {
+          console.error('❌ Use only one of --docker or --no-docker.');
+          process.exit(1);
+        }
+        dockerOverride = true;
+        continue;
+      }
+
+      if (key === 'no-docker') {
+        if (dockerOverride === true) {
+          console.error('❌ Use only one of --docker or --no-docker.');
+          process.exit(1);
+        }
+        dockerOverride = false;
+        continue;
+      }
+
+      if (key === 'db') {
+        if (dbOverride === false) {
+          console.error('❌ Use only one of --db or --no-db.');
+          process.exit(1);
+        }
+        dbOverride = true;
+        continue;
+      }
+
+      if (key === 'no-db') {
+        if (dbOverride === true) {
+          console.error('❌ Use only one of --db or --no-db.');
+          process.exit(1);
+        }
+        dbOverride = false;
+        continue;
+      }
+
+      flags.add(key);
+    }
+
+    const presetFlags = Object.keys(PRESET_FLAG_MAP).filter(flag => flags.has(flag));
+    const projectTypeFlags = Object.keys(PROJECT_TYPE_FLAG_MAP).filter(flag => flags.has(flag));
+
+    if (presetFlags.length > 1) {
+      console.error('❌ Please provide only one preset flag (e.g., --angular).');
+      process.exit(1);
+    }
+
+    if (projectTypeFlags.length > 1) {
+      console.error('❌ Please provide only one project type flag (e.g., --web-app).');
+      process.exit(1);
+    }
+
+    return {
+      showHelp: flags.has('help') || flags.has('h'),
+      nonInteractive: presetFlags.length > 0 || projectTypeFlags.length > 0
+        || projectName !== null || dockerOverride !== null || dbOverride !== null
+        || githubUser !== null,
+      nxPreset: presetFlags.length ? PRESET_FLAG_MAP[presetFlags[0]].nxPreset : null,
+      language: presetFlags.length ? PRESET_FLAG_MAP[presetFlags[0]].language : null,
+      projectType: projectTypeFlags.length ? PROJECT_TYPE_FLAG_MAP[projectTypeFlags[0]] : null,
+      projectName,
+      dockerOverride,
+      dbOverride,
+      githubUser
+    };
+  }
+
+  applyNonInteractiveDefaults(cliConfig) {
+    const defaults = {
+      projectType: 'Web app',
+      language: 'JavaScript/TypeScript',
+      projectDescription: 'A new development project',
+      specificDependencies: '',
+      expectedCommands: 'scaffold,build,test',
+      deploymentTarget: 'Docker container',
+      createDockerfile: true,
+      baseImage: 'Alpine',
+      repoName: 'my-project',
+      initGit: true,
+      generateReadme: true,
+      setupVersioning: true,
+      generateScripts: true,
+      includeDocs: true,
+      useGeminiCLI: false,
+      useClaudeCode: false,
+      useCodexCLI: false
+    };
+
+    this.answers = { ...defaults };
+
+    if (cliConfig.projectType) {
+      this.answers.projectType = cliConfig.projectType;
+    }
+    if (cliConfig.language) {
+      this.answers.language = cliConfig.language;
+    }
+
+    if (cliConfig.projectName) {
+      this.answers.repoName = cliConfig.projectName;
+    }
+
+    if (cliConfig.githubUser) {
+      this.answers.githubUser = cliConfig.githubUser;
+    }
+
+    if (typeof cliConfig.dockerOverride === 'boolean') {
+      this.answers.createDockerfile = cliConfig.dockerOverride;
+    }
+
+    const shouldUseNx = this.shouldRecommendNx();
+    this.answers.useNx = shouldUseNx;
+    this.answers.enableAutomation = shouldUseNx;
+
+    if (cliConfig.nxPreset) {
+      this.answers.useNx = true;
+      this.answers.enableAutomation = true;
+      this.answers.nxPreset = cliConfig.nxPreset;
+    } else if (this.answers.useNx) {
+      this.answers.nxPreset = this.getDefaultNxPreset();
+    }
+
+    this.answers.includeDbService = false;
+    if (this.answers.createDockerfile && typeof cliConfig.dbOverride === 'boolean') {
+      const canIncludeDb = this.shouldOfferDatabaseService();
+      if (cliConfig.dbOverride && !canIncludeDb) {
+        console.warn('⚠️  Database service is not recommended for this preset. Skipping --db.');
+      } else {
+        this.answers.includeDbService = cliConfig.dbOverride;
+      }
+    } else if (!this.answers.createDockerfile && cliConfig.dbOverride) {
+      console.warn('⚠️  Docker is disabled. Skipping --db.');
+    }
+  }
+
+  printHelp() {
+    console.log('Usage:');
+    console.log('  node wizard.js');
+    console.log('  node wizard.js --angular');
+    console.log('  node wizard.js --react');
+    console.log('  node wizard.js --vue');
+    console.log('  node wizard.js --node');
+    console.log('  node wizard.js --typescript');
+    console.log('  node wizard.js --java');
+    console.log('  node wizard.js --dotnet');
+    console.log('  node wizard.js --web-app');
+    console.log('  node wizard.js --cli-tool');
+    console.log('  node wizard.js --library');
+    console.log('  node wizard.js --api-service');
+    console.log('  node wizard.js --mobile-app');
+    console.log('  node wizard.js --other');
+    console.log('  node wizard.js --name my-project');
+    console.log('  node wizard.js --user my-github-handle');
+    console.log('  node wizard.js --docker');
+    console.log('  node wizard.js --no-docker');
+    console.log('  node wizard.js --db');
+    console.log('  node wizard.js --no-db');
+    console.log('\nNotes:');
+    console.log('  - Any preset/project-type flag runs the wizard in non-interactive mode.');
+    console.log('  - --name, --user, --docker/--no-docker, and --db/--no-db also trigger non-interactive mode.');
+    console.log('  - All other values use the same defaults as the interactive wizard.');
+    console.log('  - You can combine one preset flag with one project-type flag.');
+  }
+
   async run() {
     console.log('🚀 Project Setup Wizard');
     console.log('========================\n');
+
+    if (this.cliConfig.showHelp) {
+      this.printHelp();
+      this.rl.close();
+      return;
+    }
+
+    if (this.cliConfig.nonInteractive) {
+      console.log('⚙️  Running in non-interactive mode with defaults.\n');
+      this.applyNonInteractiveDefaults(this.cliConfig);
+      await this.generateProject();
+      return;
+    }
 
     // 1. Project Basics
     console.log('📋 Project Basics');
@@ -66,10 +340,7 @@ class ProjectWizard {
     );
     
     // Handle both number selection and direct text
-    const projectTypeIndex = parseInt(projectTypeAnswer) - 1;
-    this.answers.projectType = (projectTypeIndex >= 0 && projectTypeIndex < projectTypes.length) 
-      ? projectTypes[projectTypeIndex] 
-      : projectTypeAnswer;
+    this.answers.projectType = this.normalizeOptionAnswer(projectTypeAnswer, projectTypes);
 
     const languages = [
       'JavaScript/TypeScript',
@@ -86,10 +357,7 @@ class ProjectWizard {
       'JavaScript/TypeScript'
     );
     
-    const languageIndex = parseInt(languageAnswer) - 1;
-    this.answers.language = (languageIndex >= 0 && languageIndex < languages.length) 
-      ? languages[languageIndex] 
-      : languageAnswer;
+    this.answers.language = this.normalizeOptionAnswer(languageAnswer, languages);
 
     this.answers.projectDescription = await this.ask(
       'Briefly describe the main purpose or functionality (optional):',
@@ -135,10 +403,7 @@ class ProjectWizard {
         this.getDefaultNxPreset()
       );
 
-      const nxPresetIndex = parseInt(nxPresetAnswer) - 1;
-      this.answers.nxPreset = (nxPresetIndex >= 0 && nxPresetIndex < nxPresets.length)
-        ? nxPresets[nxPresetIndex]
-        : nxPresetAnswer;
+      this.answers.nxPreset = this.normalizeOptionAnswer(nxPresetAnswer, nxPresets);
     }
 
     // 3. Coding Assistant
@@ -155,13 +420,10 @@ class ProjectWizard {
     const assistantAnswer = await this.ask(
       'Which coding assistant do you want to use?',
       assistantOptions,
-      'Gemini CLI'
+      'None'
     );
 
-    const assistantIndex = parseInt(assistantAnswer) - 1;
-    const assistantChoice = (assistantIndex >= 0 && assistantIndex < assistantOptions.length)
-      ? assistantOptions[assistantIndex]
-      : assistantAnswer;
+    const assistantChoice = this.normalizeOptionAnswer(assistantAnswer, assistantOptions);
 
     const assistantChoiceLower = assistantChoice.toLowerCase();
     this.answers.useGeminiCLI = assistantChoiceLower.includes('gemini');
@@ -207,10 +469,7 @@ class ProjectWizard {
       'Docker container'
     );
     
-    const deploymentIndex = parseInt(deploymentAnswer) - 1;
-    this.answers.deploymentTarget = (deploymentIndex >= 0 && deploymentIndex < deploymentTargets.length) 
-      ? deploymentTargets[deploymentIndex] 
-      : deploymentAnswer;
+    this.answers.deploymentTarget = this.normalizeOptionAnswer(deploymentAnswer, deploymentTargets);
 
     this.answers.createDockerfile = await this.askYesNo(
       'Create Dockerfile and container setup?',
@@ -225,10 +484,17 @@ class ProjectWizard {
         'Alpine'
       );
       
-      const imageIndex = parseInt(imageAnswer) - 1;
-      this.answers.baseImage = (imageIndex >= 0 && imageIndex < baseImages.length) 
-        ? baseImages[imageIndex] 
-        : imageAnswer;
+      this.answers.baseImage = this.normalizeOptionAnswer(imageAnswer, baseImages);
+      if (this.shouldOfferDatabaseService()) {
+        this.answers.includeDbService = await this.askYesNo(
+          'Include a Postgres database service in docker-compose.yml?',
+          'no'
+        );
+      } else {
+        this.answers.includeDbService = false;
+      }
+    } else {
+      this.answers.includeDbService = false;
     }
 
     // 5. GitHub Template
@@ -249,6 +515,12 @@ class ProjectWizard {
     this.answers.generateReadme = await this.askYesNo(
       'Generate README and contributing guidelines?',
       'yes'
+    );
+
+    this.answers.githubUser = await this.ask(
+      'GitHub username for .env (optional):',
+      null,
+      ''
     );
 
     this.answers.setupVersioning = await this.askYesNo(
@@ -281,6 +553,19 @@ class ProjectWizard {
       return 'Java';
     }
     return 'Node';
+  }
+
+  shouldOfferDatabaseService() {
+    if (this.answers.useNx) {
+      const preset = this.getNormalizedNxPreset();
+      return ['node', 'java', 'dotnet'].includes(preset);
+    }
+    const profile = this.getLanguageProfile();
+    if (profile.isJava || profile.isDotnet) {
+      return true;
+    }
+    const projectType = (this.answers.projectType || '').toLowerCase();
+    return profile.isJsTs && projectType.includes('api');
   }
 
   isJavaLanguage() {
@@ -364,8 +649,8 @@ class ProjectWizard {
         label: 'Java',
         docsUrl: 'https://nx.dev/docs/technologies/java/introduction',
         plugins: [],
-        appGenerator: null,
-        libGenerator: null,
+        appGenerator: '',
+        libGenerator: '',
         usesJs: false
       },
       dotnet: {
@@ -395,6 +680,30 @@ class ProjectWizard {
     }
     preset.plugins.forEach(plugin => packages.push(plugin));
     return [...new Set(packages)];
+  }
+
+  getNxGeneratorDefaults() {
+    return {
+      typescript: ['--interactive=false'],
+      angular: ['--interactive=false'],
+      react: ['--interactive=false'],
+      vue: ['--interactive=false'],
+      node: ['--interactive=false'],
+      java: ['--interactive=false'],
+      dotnet: ['--interactive=false']
+    };
+  }
+
+  getNxGeneratorFlags(presetKey) {
+    const defaults = this.getNxGeneratorDefaults();
+    return defaults[presetKey] || defaults.typescript;
+  }
+
+  getNxTypescriptVersion(presetKey) {
+    if (presetKey === 'angular') {
+      return '~5.3.3';
+    }
+    return '^5.4.0';
   }
 
   getProjectSlug() {
@@ -462,6 +771,8 @@ class ProjectWizard {
         this.generateReadme(projectPath);
       }
 
+      this.generateEnvFile(projectPath);
+
       // Generate requirements files if needed
       this.generateRequirementsFiles(projectPath);
 
@@ -505,8 +816,8 @@ class ProjectWizard {
     this.rl.close();
   }
 
-  generateDevboxConfig(projectPath) {
-    const config = {
+  buildDevboxConfig() {
+    return {
       $schema: 'https://raw.githubusercontent.com/jetpack-io/devbox/main/.schema/devbox.schema.json',
       packages: this.getDevboxPackages(),
       shell: {
@@ -514,7 +825,10 @@ class ProjectWizard {
         scripts: this.getShellScripts()
       }
     };
+  }
 
+  generateDevboxConfig(projectPath) {
+    const config = this.buildDevboxConfig();
     fs.writeFileSync(
       path.join(projectPath, 'devbox.json'),
       JSON.stringify(config, null, 2)
@@ -523,21 +837,22 @@ class ProjectWizard {
 
   getDevboxPackages() {
     const packages = ['git', 'curl', 'wget'];
+    const profile = this.getLanguageProfile();
     
     // Language-specific packages
-    if (this.answers.language?.includes('JavaScript') || this.answers.language?.includes('TypeScript')) {
+    if (profile.isJsTs) {
       packages.push('nodejs', 'pnpm');
     }
-    if (this.isJavaLanguage()) {
+    if (profile.isJava) {
       packages.push('jdk', 'maven');
     }
-    if (this.answers.language?.includes('Rust')) {
+    if (profile.isRust) {
       packages.push('rustc', 'cargo');
     }
-    if (this.answers.language?.includes('Python')) {
+    if (profile.isPython) {
       packages.push('python3');
     }
-    if (this.answers.language?.includes('.NET')) {
+    if (profile.isDotnet) {
       packages.push('dotnet-sdk');
     }
     if (this.answers.createDockerfile) {
@@ -614,9 +929,10 @@ class ProjectWizard {
 
   getInitHook() {
     let hook = 'echo "🚀 Development environment ready!"';
+    const profile = this.getLanguageProfile();
     
     // Language-specific setup
-    if (this.answers.language?.includes('Python')) {
+    if (profile.isPython) {
       hook += '\n# Create and activate a Python virtual environment';
       hook += '\nif [ -x ".venv/bin/activate" ]; then';
       hook += '\n  . .venv/bin/activate';
@@ -629,7 +945,7 @@ class ProjectWizard {
       hook += '\nif [ -f requirements.txt ]; then python -m pip install --upgrade pip && python -m pip install -r requirements.txt; fi';
     }
 
-    if (this.answers.useNx || this.answers.language?.includes('JavaScript') || this.answers.language?.includes('TypeScript')) {
+    if (this.answers.useNx || profile.isJsTs) {
       hook += '\necho "📦 Installing Node.js dependencies..."';
       hook += '\nif ! command -v pnpm >/dev/null 2>&1; then';
       hook += '\n  if command -v corepack >/dev/null 2>&1; then corepack enable; fi';
@@ -682,7 +998,7 @@ class ProjectWizard {
     };
 
     if (this.answers.generateScripts) {
-      const commands = this.answers.expectedCommands.split(',').map(cmd => cmd.trim());
+      const commands = this.getExpectedCommands();
       
       if (this.answers.useGeminiCLI) {
         commands.forEach(cmd => {
@@ -705,74 +1021,116 @@ class ProjectWizard {
   }
 
   getDevScript() {
+    const profile = this.getLanguageProfile();
     if (this.answers.useNx) {
       return 'pnpm run dev';
     }
-    if (this.answers.language?.includes('JavaScript') || this.answers.language?.includes('TypeScript')) {
+    if (profile.isJsTs) {
       return 'pnpm run dev';
     }
-    if (this.answers.language?.includes('Python')) {
+    if (profile.isPython) {
       return '. .venv/bin/activate && python src/main.py';
     }
-    if (this.answers.language?.includes('Rust')) {
+    if (profile.isRust) {
       return 'cargo run';
     }
-    if (this.isJavaLanguage()) {
-      return `mvn -q -DskipTests compile && java -cp target/classes ${this.getJavaPackageName()}.App`;
+    if (profile.isJava) {
+      return 'mvn -q -DskipTests package && java -jar target/app.jar';
     }
-    if (this.answers.language?.includes('.NET')) {
+    if (profile.isDotnet) {
       return 'dotnet run';
     }
     return 'echo "Configure your dev command"';
   }
 
   getBuildScript() {
+    const profile = this.getLanguageProfile();
     if (this.answers.useNx) {
       return 'pnpm run build';
     }
-    if (this.answers.language?.includes('JavaScript') || this.answers.language?.includes('TypeScript')) {
+    if (profile.isJsTs) {
       return 'pnpm run build';
     }
-    if (this.answers.language?.includes('Rust')) {
+    if (profile.isRust) {
       return 'cargo build --release';
     }
-    if (this.isJavaLanguage()) {
+    if (profile.isJava) {
       return 'mvn clean package';
     }
-    if (this.answers.language?.includes('.NET')) {
+    if (profile.isDotnet) {
       return 'dotnet build';
     }
     return 'echo "Configure your build command"';
   }
 
   getTestScript() {
+    const profile = this.getLanguageProfile();
     if (this.answers.useNx) {
       return 'pnpm run test';
     }
-    if (this.answers.language?.includes('JavaScript') || this.answers.language?.includes('TypeScript')) {
+    if (profile.isJsTs) {
       return 'pnpm test';
     }
-    if (this.answers.language?.includes('Python')) {
+    if (profile.isPython) {
       return '. .venv/bin/activate && if ls tests/*.py >/dev/null 2>&1; then python -m pytest tests/; else echo "No tests configured yet"; fi';
     }
-    if (this.answers.language?.includes('Rust')) {
+    if (profile.isRust) {
       return 'cargo test';
     }
-    if (this.isJavaLanguage()) {
+    if (profile.isJava) {
       return 'mvn test';
     }
-    if (this.answers.language?.includes('.NET')) {
+    if (profile.isDotnet) {
       return 'if ls tests/*.csproj >/dev/null 2>&1; then dotnet test; else echo "No tests configured yet"; fi';
     }
     return 'echo "Configure your test command"';
+  }
+
+  tryGenerateNxApplication(projectPath, projectName, presetKey, preset) {
+    if (!preset.appGenerator) {
+      console.warn(`⚠️  No Nx generator configured for ${preset.label}. Falling back to minimal scaffold.`);
+      return false;
+    }
+
+    try {
+      execSync('pnpm --version', { stdio: 'ignore' });
+    } catch (error) {
+      console.warn('⚠️  pnpm not found. Skipping Nx generator and using minimal scaffold.');
+      return false;
+    }
+
+    const env = {
+      ...process.env,
+      CI: '1',
+      NX_INTERACTIVE: 'false'
+    };
+
+    try {
+      execSync('pnpm install', { cwd: projectPath, stdio: 'inherit', env });
+    } catch (error) {
+      console.warn('⚠️  pnpm install failed. Skipping Nx generator and using minimal scaffold.');
+      return false;
+    }
+
+    const flags = this.getNxGeneratorFlags(presetKey);
+    const generatorCommand = ['pnpm exec nx g', preset.appGenerator, projectName, ...flags].join(' ');
+
+    try {
+      execSync(generatorCommand, { cwd: projectPath, stdio: 'inherit', env });
+      return true;
+    } catch (error) {
+      console.warn('⚠️  Nx generator failed. Falling back to minimal scaffold.');
+      return false;
+    }
   }
 
   async generateNxSetup(projectPath) {
     console.log('📦 Setting up Nx workspace...');
     
     const projectName = this.getProjectSlug();
-    const appRoot = path.join(projectPath, 'apps', projectName);
-    fs.mkdirSync(path.join(appRoot, 'src'), { recursive: true });
+    const presetKey = this.getNormalizedNxPreset();
+    const preset = this.getNxPresetDetails();
+    fs.mkdirSync(path.join(projectPath, 'apps'), { recursive: true });
     fs.mkdirSync(path.join(projectPath, 'libs'), { recursive: true });
 
     // Create nx.json
@@ -795,15 +1153,15 @@ class ProjectWizard {
       JSON.stringify(nxConfig, null, 2)
     );
 
-    const preset = this.getNxPresetDetails();
-    const isJsTs = this.answers.language?.includes('JavaScript') || this.answers.language?.includes('TypeScript');
+    const profile = this.getLanguageProfile();
+    const isJsTs = profile.isJsTs;
     const devDependencies = {
       nx: '^17.0.0'
     };
 
     if (preset.usesJs || isJsTs) {
       devDependencies['@nx/js'] = '^17.0.0';
-      devDependencies.typescript = '^5.4.0';
+      devDependencies.typescript = this.getNxTypescriptVersion(presetKey);
     }
 
     preset.plugins.forEach(plugin => {
@@ -841,15 +1199,78 @@ class ProjectWizard {
 `;
     fs.writeFileSync(path.join(projectPath, 'pnpm-workspace.yaml'), pnpmWorkspace);
 
-    const projectConfig = this.getNxProjectConfig(projectName);
-    fs.writeFileSync(
-      path.join(appRoot, 'project.json'),
-      JSON.stringify(projectConfig, null, 2)
-    );
-
-    this.createLanguageScaffold(appRoot, { useNx: true, workspaceRoot: projectPath });
-
     this.writeNxGenerateScript(projectPath);
+
+    let generatorSucceeded = false;
+    if (this.answers.enableAutomation) {
+      generatorSucceeded = this.tryGenerateNxApplication(projectPath, projectName, presetKey, preset);
+    }
+
+    if (!generatorSucceeded) {
+      const appRoot = path.join(projectPath, 'apps', projectName);
+      fs.mkdirSync(path.join(appRoot, 'src'), { recursive: true });
+
+      const projectConfig = this.getNxProjectConfig(projectName);
+      fs.writeFileSync(
+        path.join(appRoot, 'project.json'),
+        JSON.stringify(projectConfig, null, 2)
+      );
+
+      this.createLanguageScaffold(appRoot, { useNx: true, workspaceRoot: projectPath });
+    }
+
+    this.ensureNxServePort(projectPath, projectName);
+  }
+
+  ensureNxServePort(projectPath, projectName) {
+    const preset = this.getNormalizedNxPreset();
+    if (!['angular', 'react', 'vue'].includes(preset)) {
+      return;
+    }
+
+    const projectConfigPath = path.join(projectPath, 'apps', projectName, 'project.json');
+    if (!fs.existsSync(projectConfigPath)) {
+      return;
+    }
+
+    let projectConfig;
+    try {
+      projectConfig = JSON.parse(fs.readFileSync(projectConfigPath, 'utf8'));
+    } catch (error) {
+      console.warn('⚠️  Failed to read Nx project configuration for port update.');
+      return;
+    }
+
+    const serveTarget = projectConfig.targets?.serve;
+    if (!serveTarget) {
+      return;
+    }
+
+    const executor = serveTarget.executor || '';
+    if (!executor.includes('dev-server')) {
+      return;
+    }
+
+    if (!serveTarget.options) {
+      serveTarget.options = {};
+    }
+
+    const port = this.getDockerBasePort();
+    serveTarget.options.port = port;
+
+    fs.writeFileSync(projectConfigPath, JSON.stringify(projectConfig, null, 2));
+
+    const e2eConfigPath = path.join(projectPath, 'apps', `${projectName}-e2e`, 'cypress.config.ts');
+    if (fs.existsSync(e2eConfigPath)) {
+      const e2eConfig = fs.readFileSync(e2eConfigPath, 'utf8');
+      const updatedConfig = e2eConfig.replace(
+        /baseUrl:\s*'http:\/\/localhost:\d+'/,
+        `baseUrl: 'http://localhost:${port}'`
+      );
+      if (updatedConfig !== e2eConfig) {
+        fs.writeFileSync(e2eConfigPath, updatedConfig);
+      }
+    }
   }
 
   async generateDevboxOnlySetup(projectPath) {
@@ -871,16 +1292,17 @@ class ProjectWizard {
   }
 
   getBuildScriptFile() {
-    if (this.answers.language?.includes('Rust')) {
+    const profile = this.getLanguageProfile();
+    if (profile.isRust) {
       return '#!/bin/bash\nset -euo pipefail\necho "Building Rust project..."\ncargo build --release';
     }
-    if (this.answers.language?.includes('Python')) {
+    if (profile.isPython) {
       return '#!/bin/bash\nset -euo pipefail\necho "Setting up Python project..."\nif [ -f requirements.txt ]; then python -m pip install -r requirements.txt; else echo "No requirements.txt found"; fi\necho "Running tests..."\nif ls tests/*.py >/dev/null 2>&1; then python -m pytest tests/; else echo "No tests configured yet"; fi';
     }
-    if (this.answers.language?.includes('.NET')) {
+    if (profile.isDotnet) {
       return '#!/bin/bash\nset -euo pipefail\necho "Building .NET project..."\ndotnet build\nif ls tests/*.csproj >/dev/null 2>&1; then dotnet test; else echo "No tests configured yet"; fi';
     }
-    if (this.isJavaLanguage()) {
+    if (profile.isJava) {
       return '#!/bin/bash\nset -euo pipefail\necho "Building Java project..."\nmvn -q -DskipTests compile\nif [ -d tests ]; then mvn -q test; else echo "No tests configured yet"; fi';
     }
     return '#!/bin/bash\necho "Build script ready for customization"';
@@ -900,12 +1322,8 @@ class ProjectWizard {
   getNxTargets(projectName) {
     const basePath = `apps/${projectName}`;
     const nxPreset = this.getNxPresetDetails();
-    const isJsTs = this.answers.language?.includes('JavaScript') || this.answers.language?.includes('TypeScript');
-    const isPython = this.answers.language?.includes('Python');
-    const isRust = this.answers.language?.includes('Rust');
-    const isJava = this.isJavaLanguage();
-    const isDotnet = this.answers.language?.includes('.NET');
-    const useJsTargets = (nxPreset.usesJs || isJsTs) && !isPython && !isRust && !isJava && !isDotnet;
+    const profile = this.getLanguageProfile();
+    const useJsTargets = (nxPreset.usesJs || profile.isJsTs) && !profile.isPython && !profile.isRust && !profile.isJava && !profile.isDotnet;
 
     if (useJsTargets) {
       return {
@@ -949,25 +1367,25 @@ class ProjectWizard {
     let testCwd = '.';
     let serveDependsOnBuild = false;
 
-    if (isPython) {
+    if (profile.isPython) {
       buildCommand = `python -m py_compile ${basePath}/src/main.py`;
       serveCommand = `python ${basePath}/src/main.py`;
       testCommand = `if ls ${basePath}/tests/*.py >/dev/null 2>&1; then python -m pytest ${basePath}/tests; else echo "No tests configured yet"; fi`;
-    } else if (isRust) {
+    } else if (profile.isRust) {
       buildCommand = 'cargo build --release';
       serveCommand = 'cargo run';
       testCommand = 'cargo test';
       buildCwd = basePath;
       serveCwd = basePath;
       testCwd = basePath;
-    } else if (isJava) {
+    } else if (profile.isJava) {
       buildCommand = 'mvn -q -DskipTests compile';
-      serveCommand = `mvn -q -DskipTests compile && java -cp target/classes ${this.getJavaPackageName()}.App`;
+      serveCommand = 'mvn -q -DskipTests package && java -jar target/app.jar';
       testCommand = 'mvn -q test';
       buildCwd = basePath;
       serveCwd = basePath;
       testCwd = basePath;
-    } else if (isDotnet) {
+    } else if (profile.isDotnet) {
       buildCommand = 'dotnet build';
       serveCommand = 'dotnet run';
       testCommand = 'if ls tests/*.csproj >/dev/null 2>&1; then dotnet test; else echo "No tests configured yet"; fi';
@@ -1076,16 +1494,12 @@ esac
   createLanguageScaffold(projectPath, options = {}) {
     const isNx = options.useNx;
     const workspaceRoot = options.workspaceRoot || projectPath;
-    const isJsTs = this.answers.language?.includes('JavaScript') || this.answers.language?.includes('TypeScript');
-    const isPython = this.answers.language?.includes('Python');
-    const isRust = this.answers.language?.includes('Rust');
-    const isJava = this.isJavaLanguage();
-    const isDotnet = this.answers.language?.includes('.NET');
+    const profile = this.getLanguageProfile();
 
     const sourceDir = path.join(projectPath, 'src');
     fs.mkdirSync(sourceDir, { recursive: true });
 
-    if (isPython) {
+    if (profile.isPython) {
       const content = `#!/usr/bin/env python3
 """
 ${this.answers.projectDescription}
@@ -1102,7 +1516,7 @@ if __name__ == "__main__":
       return;
     }
 
-    if (isJsTs) {
+    if (profile.isJsTs) {
       if (isNx) {
         const baseConfig = {
           compilerOptions: {
@@ -1173,12 +1587,12 @@ if (require.main === module) {
 
 module.exports = { main };
 `;
-        fs.writeFileSync(path.join(sourceDir, 'main.js'), content);
+      fs.writeFileSync(path.join(sourceDir, 'main.js'), content);
       }
       return;
     }
 
-    if (isRust) {
+    if (profile.isRust) {
       const cargo = `[package]
 name = "${this.getProjectSlug()}"
 version = "0.1.0"
@@ -1209,10 +1623,21 @@ mod tests {
       return;
     }
 
-    if (isJava) {
+    if (profile.isJava) {
       const packageName = this.getJavaPackageName();
       const packagePath = path.join(projectPath, 'src', 'main', 'java', ...packageName.split('.'));
       fs.mkdirSync(packagePath, { recursive: true });
+
+      const hasDb = this.answers.includeDbService;
+      const dbDependency = hasDb ? `
+  <dependencies>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>42.7.4</version>
+    </dependency>
+  </dependencies>
+` : '';
 
       const pom = `<project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -1224,25 +1649,139 @@ mod tests {
   <properties>
     <maven.compiler.source>17</maven.compiler.source>
     <maven.compiler.target>17</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
+${dbDependency}
+  <build>
+    <finalName>app</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.5.1</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>${packageName}.App</mainClass>
+                </transformer>
+              </transformers>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>
 `;
       fs.writeFileSync(path.join(projectPath, 'pom.xml'), pom);
 
+      const dbImports = hasDb ? `
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;` : '';
+
+      const dbLogic = hasDb ? `
+    runDbCheck();
+` : '';
+
+      const dbHelper = hasDb ? `
+  private static void runDbCheck() {
+    String host = System.getenv("DB_HOST");
+    String name = System.getenv("DB_NAME");
+    String user = System.getenv("DB_USER");
+    String password = System.getenv("DB_PASSWORD");
+    String portEnv = System.getenv("DB_PORT");
+    if (host == null || name == null || user == null || password == null) {
+      System.out.println("DB env not set; skipping database check.");
+      return;
+    }
+    String port = (portEnv == null || portEnv.isBlank()) ? "5432" : portEnv;
+    String jdbcUrl = "jdbc:postgresql://" + host + ":" + port + "/" + name;
+    try (Connection conn = DriverManager.getConnection(jdbcUrl, user, password);
+         Statement stmt = conn.createStatement()) {
+      stmt.executeUpdate("CREATE TABLE IF NOT EXISTS wizard_health (id SERIAL PRIMARY KEY, checked_at TIMESTAMPTZ NOT NULL DEFAULT now())");
+      stmt.executeUpdate("INSERT INTO wizard_health DEFAULT VALUES");
+      System.out.println("DB connection ok: " + jdbcUrl);
+    } catch (SQLException ex) {
+      System.out.println("DB connection failed: " + ex.getMessage());
+    }
+  }
+` : '';
+
       const content = `package ${packageName};
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;${dbImports}
+
 public class App {
-  public static void main(String[] args) {
-    System.out.println("Hello, World!");
+  private static final int DEFAULT_PORT = 8080;
+
+  public static void main(String[] args) throws Exception {
     System.out.println("Project: ${this.answers.repoName}");
+${dbLogic}
+    int port = getPort();
+    startServer(port);
   }
+
+  private static void startServer(int port) throws IOException {
+    try (ServerSocket serverSocket = new ServerSocket(port)) {
+      System.out.println("Listening on port " + port);
+      while (true) {
+        try (Socket socket = serverSocket.accept()) {
+          socket.setSoTimeout(2000);
+          BufferedReader reader = new BufferedReader(
+            new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8)
+          );
+          OutputStream out = socket.getOutputStream();
+          String line;
+          while ((line = reader.readLine()) != null && !line.isEmpty()) {
+            // Consume request headers.
+          }
+          byte[] body = "OK".getBytes(StandardCharsets.UTF_8);
+          String header = "HTTP/1.1 200 OK\\r\\n"
+            + "Content-Type: text/plain; charset=utf-8\\r\\n"
+            + "Content-Length: " + body.length + "\\r\\n\\r\\n";
+          out.write(header.getBytes(StandardCharsets.UTF_8));
+          out.write(body);
+          out.flush();
+        } catch (IOException ex) {
+          System.out.println("Request handling failed: " + ex.getMessage());
+        }
+      }
+    }
+  }
+
+  private static int getPort() {
+    String portEnv = System.getenv("PORT");
+    if (portEnv == null || portEnv.isBlank()) {
+      return DEFAULT_PORT;
+    }
+    try {
+      return Integer.parseInt(portEnv);
+    } catch (NumberFormatException ex) {
+      return DEFAULT_PORT;
+    }
+  }
+${dbHelper}
 }
 `;
       fs.writeFileSync(path.join(packagePath, 'App.java'), content);
       return;
     }
 
-    if (isDotnet) {
+    if (profile.isDotnet) {
       const projectName = this.getDotnetProjectName();
       const csproj = `<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
@@ -1275,8 +1814,9 @@ internal class Program
       .split(',')
       .map(dep => dep.trim())
       .filter(dep => dep.length > 0);
+    const profile = this.getLanguageProfile();
 
-    if (this.answers.language?.includes('Python')) {
+    if (profile.isPython) {
       const requirements = rawDeps.length > 0 ? rawDeps.join('\n') + '\n' : '';
       fs.writeFileSync(path.join(projectPath, 'requirements.txt'), requirements);
 
@@ -1285,7 +1825,7 @@ internal class Program
       }
     }
 
-    if (this.answers.language?.includes('JavaScript') || this.answers.language?.includes('TypeScript')) {
+    if (profile.isJsTs) {
       if (!this.answers.useNx) {
         const packageJson = {
           name: this.answers.repoName,
@@ -1329,32 +1869,28 @@ internal class Program
     }
   }
 
-  generateAIConfig(projectPath) {
-    if (this.answers.useGeminiCLI) {
-      const commands = this.answers.expectedCommands.split(',').map(cmd => cmd.trim());
-      const geminiConfig = {
-        model: "gemini-pro",
-        context: this.answers.projectDescription || "Development project",
-        project_type: this.answers.projectType,
-        language: this.answers.language,
-        commands: {}
+  buildGeminiConfig(commands) {
+    const geminiConfig = {
+      model: "gemini-pro",
+      context: this.answers.projectDescription || "Development project",
+      project_type: this.answers.projectType,
+      language: this.answers.language,
+      commands: {}
+    };
+
+    // Add command configurations
+    commands.forEach(cmd => {
+      geminiConfig.commands[cmd] = {
+        description: `${cmd.charAt(0).toUpperCase() + cmd.slice(1)} command for ${this.answers.projectType}`,
+        context: `Working on a ${this.answers.language} ${this.answers.projectType}`
       };
+    });
 
-      // Add command configurations
-      commands.forEach(cmd => {
-        geminiConfig.commands[cmd] = {
-          description: `${cmd.charAt(0).toUpperCase() + cmd.slice(1)} command for ${this.answers.projectType}`,
-          context: `Working on a ${this.answers.language} ${this.answers.projectType}`
-        };
-      });
+    return geminiConfig;
+  }
 
-      fs.writeFileSync(
-        path.join(projectPath, '.gemini.json'),
-        JSON.stringify(geminiConfig, null, 2)
-      );
-
-      // Create installation script
-      const installScript = `#!/bin/bash
+  buildGeminiInstallScript() {
+    return `#!/bin/bash
 # Use Gemini via pnpm dlx (no global install required)
 set -euo pipefail
 
@@ -1374,29 +1910,23 @@ fi
 echo "Set your API key before use:"
 echo "export GEMINI_API_KEY=your_api_key_here"
 `;
-      fs.writeFileSync(path.join(projectPath, 'scripts', 'install-gemini.sh'), installScript);
-      fs.chmodSync(path.join(projectPath, 'scripts', 'install-gemini.sh'), '755');
-    }
+  }
 
-    if (this.answers.useClaudeCode) {
-      const claudeConfig = {
-        model: "claude-sonnet-4",
-        project_context: this.answers.projectDescription || "Development project",
-        project_type: this.answers.projectType,
-        language: this.answers.language,
-        preferences: {
-          coding_style: "clean and well-documented",
-          test_framework: this.getTestFramework()
-        }
-      };
+  buildClaudeConfig() {
+    return {
+      model: "claude-sonnet-4",
+      project_context: this.answers.projectDescription || "Development project",
+      project_type: this.answers.projectType,
+      language: this.answers.language,
+      preferences: {
+        coding_style: "clean and well-documented",
+        test_framework: this.getTestFramework()
+      }
+    };
+  }
 
-      fs.writeFileSync(
-        path.join(projectPath, '.claude.json'),
-        JSON.stringify(claudeConfig, null, 2)
-      );
-
-      // Create installation script
-      const installScript = `#!/bin/bash
+  buildClaudeInstallScript() {
+    return `#!/bin/bash
 # Use Claude Code via pnpm dlx (no global install required)
 set -euo pipefail
 
@@ -1417,28 +1947,23 @@ echo "After setup, you can run: claude doctor"
 echo "Authenticate via Anthropic Console or Claude App as needed"
 echo "Set your API key if required: export ANTHROPIC_API_KEY=your_api_key_here"
 `;
-      fs.writeFileSync(path.join(projectPath, 'scripts', 'install-claude.sh'), installScript);
-      fs.chmodSync(path.join(projectPath, 'scripts', 'install-claude.sh'), '755');
-    }
+  }
 
-    if (this.answers.useCodexCLI) {
-      const codexConfig = {
-        model: "gpt-4.1",
-        project_context: this.answers.projectDescription || "Development project",
-        project_type: this.answers.projectType,
-        language: this.answers.language,
-        preferences: {
-          coding_style: "clean and well-documented",
-          test_framework: this.getTestFramework()
-        }
-      };
+  buildCodexConfig() {
+    return {
+      model: "gpt-4.1",
+      project_context: this.answers.projectDescription || "Development project",
+      project_type: this.answers.projectType,
+      language: this.answers.language,
+      preferences: {
+        coding_style: "clean and well-documented",
+        test_framework: this.getTestFramework()
+      }
+    };
+  }
 
-      fs.writeFileSync(
-        path.join(projectPath, '.codex.json'),
-        JSON.stringify(codexConfig, null, 2)
-      );
-
-      const installScript = `#!/bin/bash
+  buildCodexInstallScript() {
+    return `#!/bin/bash
 # Use Codex via pnpm dlx (no global install required)
 set -euo pipefail
 
@@ -1450,7 +1975,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
 fi
 if command -v pnpm >/dev/null 2>&1; then
   echo "You can invoke Codex with: pnpm dlx @openai/codex <command>"
-  echo "Optionally add a shell alias in your session: alias codex=\\"pnpm dlx @openai/codex\\""
+  echo "Optionally add a shell alias in your session: alias codex=\"pnpm dlx @openai/codex\""
 else
   echo "⚠️  pnpm not found. Install Node.js (corepack) or pnpm first."
 fi
@@ -1458,46 +1983,95 @@ fi
 echo "Set your API key before use:"
 echo "export OPENAI_API_KEY=your_api_key_here"
 `;
+  }
+
+  generateAIConfig(projectPath) {
+    const commands = this.getExpectedCommands();
+    if (this.answers.useGeminiCLI) {
+      const geminiConfig = this.buildGeminiConfig(commands);
+
+      fs.writeFileSync(
+        path.join(projectPath, '.gemini.json'),
+        JSON.stringify(geminiConfig, null, 2)
+      );
+
+      // Create installation script
+      const installScript = this.buildGeminiInstallScript();
+      fs.writeFileSync(path.join(projectPath, 'scripts', 'install-gemini.sh'), installScript);
+      fs.chmodSync(path.join(projectPath, 'scripts', 'install-gemini.sh'), '755');
+    }
+
+    if (this.answers.useClaudeCode) {
+      const claudeConfig = this.buildClaudeConfig();
+
+      fs.writeFileSync(
+        path.join(projectPath, '.claude.json'),
+        JSON.stringify(claudeConfig, null, 2)
+      );
+
+      // Create installation script
+      const installScript = this.buildClaudeInstallScript();
+      fs.writeFileSync(path.join(projectPath, 'scripts', 'install-claude.sh'), installScript);
+      fs.chmodSync(path.join(projectPath, 'scripts', 'install-claude.sh'), '755');
+    }
+
+    if (this.answers.useCodexCLI) {
+      const codexConfig = this.buildCodexConfig();
+
+      fs.writeFileSync(
+        path.join(projectPath, '.codex.json'),
+        JSON.stringify(codexConfig, null, 2)
+      );
+
+      const installScript = this.buildCodexInstallScript();
       fs.writeFileSync(path.join(projectPath, 'scripts', 'install-codex.sh'), installScript);
       fs.chmodSync(path.join(projectPath, 'scripts', 'install-codex.sh'), '755');
     }
   }
 
   getTestFramework() {
-    if (this.answers.language?.includes('JavaScript') || this.answers.language?.includes('TypeScript')) {
+    const profile = this.getLanguageProfile();
+    if (profile.isJsTs) {
       return 'jest';
     }
-    if (this.answers.language?.includes('Python')) {
+    if (profile.isPython) {
       return 'pytest';
     }
-    if (this.answers.language?.includes('Rust')) {
+    if (profile.isRust) {
       return 'cargo test';
     }
-    if (this.isJavaLanguage()) {
+    if (profile.isJava) {
       return 'junit';
     }
     return 'custom';
   }
 
   generateDockerfile(projectPath) {
-    let dockerfile = this.getDockerfileContent();
+    let dockerfile = this.buildDockerfileContent();
     fs.writeFileSync(path.join(projectPath, 'Dockerfile'), dockerfile);
 
     // Generate docker-compose.yml for easier development
-    const dockerCompose = this.getDockerComposeContent();
+    const dockerCompose = this.buildDockerComposeContent();
     fs.writeFileSync(path.join(projectPath, 'docker-compose.yml'), dockerCompose);
 
     // Generate .dockerignore
-    const dockerignore = this.getDockerIgnoreContent();
+    const dockerignore = this.buildDockerIgnoreContent();
     fs.writeFileSync(path.join(projectPath, '.dockerignore'), dockerignore);
   }
 
-  getDockerfileContent() {
+  buildDockerfileContent() {
+    const profile = this.getLanguageProfile();
+    if (profile.isJava) {
+      return this.buildJavaDockerfileContent();
+    }
     const baseImage = this.getBaseDockerImage();
+    const port = this.getDockerPort();
     
     return `FROM ${baseImage}
 
 WORKDIR /app
+
+ENV PORT=${port}
 
 ${this.getDockerCopyInstructions()}
 
@@ -1505,32 +2079,64 @@ ${this.getDockerBuildInstructions()}
 
 ${this.getDockerRunInstructions()}
 
-EXPOSE 3000
+EXPOSE ${port}
 
 CMD ${this.getDockerCmd()}`;
   }
 
+  buildJavaDockerfileContent() {
+    const port = this.getDockerPort();
+    const projectName = this.getProjectSlug();
+    return `# Stage 1: Build
+FROM eclipse-temurin:25-jdk AS build
+WORKDIR /app
+RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
+COPY . .
+RUN if [ -f apps/${projectName}/pom.xml ]; then mvn -q -DskipTests -f apps/${projectName}/pom.xml package; else mvn -q -DskipTests package; fi
+RUN if [ -f apps/${projectName}/target/app.jar ]; then cp apps/${projectName}/target/app.jar /app/app.jar; else cp target/app.jar /app/app.jar; fi
+
+# Stage 2: Minimal runtime
+FROM eclipse-temurin:25-jdk AS jlink
+RUN $JAVA_HOME/bin/jlink \\
+  --module-path $JAVA_HOME/jmods \\
+  --add-modules java.base,java.logging,java.xml,java.naming,java.sql,java.management,jdk.unsupported \\
+  --output /javaruntime \\
+  --compress=2 --no-header-files --no-man-pages
+
+# Stage 3: Final image
+FROM debian:bookworm-slim
+WORKDIR /app
+COPY --from=jlink /javaruntime /opt/java-minimal
+ENV PATH="/opt/java-minimal/bin:$PATH"
+ENV PORT=${port}
+COPY --from=build /app/app.jar /app/app.jar
+EXPOSE ${port}
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]`;
+  }
+
   getBaseDockerImage() {
-    if (this.answers.language?.includes('Node') || this.answers.language?.includes('JavaScript')) {
+    const profile = this.getLanguageProfile();
+    if (this.answers.language?.includes('Node') || profile.isJsTs) {
       return this.answers.baseImage?.toLowerCase() === 'alpine' ? 'node:18-alpine' : 'node:18';
     }
-    if (this.isJavaLanguage()) {
-      return this.answers.baseImage?.toLowerCase() === 'alpine' ? 'openjdk:17-alpine' : 'openjdk:17-jdk';
+    if (profile.isJava) {
+      return 'eclipse-temurin:25-jdk';
     }
-    if (this.answers.language?.includes('Rust')) {
+    if (profile.isRust) {
       return 'rust:1.70';
     }
-    if (this.answers.language?.includes('Python')) {
+    if (profile.isPython) {
       return this.answers.baseImage?.toLowerCase() === 'alpine' ? 'python:3.11-alpine' : 'python:3.11';
     }
     return this.answers.baseImage?.toLowerCase() === 'alpine' ? 'alpine:latest' : 'ubuntu:22.04';
   }
 
   getDockerCopyInstructions() {
-    if (this.answers.language?.includes('JavaScript') || this.answers.language?.includes('TypeScript')) {
+    const profile = this.getLanguageProfile();
+    if (profile.isJsTs) {
       return 'COPY package.json pnpm-lock.yaml* ./\nRUN corepack enable\nRUN pnpm install\nCOPY . .';
     }
-    if (this.answers.language?.includes('Python')) {
+    if (profile.isPython) {
       let instructions = 'COPY requirements.txt ./\n';
       const isAlpine = (this.answers.baseImage?.toLowerCase() === 'alpine');
       if (this.answers.specificDependencies && !isAlpine) {
@@ -1540,20 +2146,22 @@ CMD ${this.getDockerCmd()}`;
       instructions += 'RUN pip install -r requirements.txt\nCOPY . .';
       return instructions;
     }
-    if (this.answers.language?.includes('Rust')) {
+    if (profile.isRust) {
       return 'COPY Cargo.toml Cargo.lock ./\nRUN cargo fetch\nCOPY . .\nRUN cargo build --release';
     }
-    if (this.isJavaLanguage()) {
-      return 'COPY pom.xml ./\nRUN mvn dependency:resolve\nCOPY . .\nRUN mvn package';
+    if (profile.isJava) {
+      const projectName = this.getProjectSlug();
+      return `RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*\nCOPY . .\nRUN if [ -f apps/${projectName}/pom.xml ]; then mvn -q -DskipTests -f apps/${projectName}/pom.xml package; else mvn -q -DskipTests package; fi`;
     }
     return 'COPY . .';
   }
 
   getDockerBuildInstructions() {
-    if (this.answers.language?.includes('JavaScript') || this.answers.language?.includes('TypeScript')) {
+    const profile = this.getLanguageProfile();
+    if (profile.isJsTs) {
       return 'RUN pnpm run build';
     }
-    if (this.answers.language?.includes('Python')) {
+    if (profile.isPython) {
       return '# Python build completed during dependency installation';
     }
     // Rust and Java builds are handled in copy instructions
@@ -1561,42 +2169,86 @@ CMD ${this.getDockerCmd()}`;
   }
 
   getDockerRunInstructions() {
-    return '# Runtime configuration\nRUN addgroup --system --gid 1001 nodejs\nRUN adduser --system --uid 1001 nextjs\nUSER nextjs';
+    return '# Runtime configuration';
   }
 
   getDockerCmd() {
-    if (this.answers.language?.includes('JavaScript')) {
+    const port = this.getDockerPort();
+    const profile = this.getLanguageProfile();
+    if (this.answers.useNx) {
+      const preset = this.getNormalizedNxPreset();
+      if (['angular', 'react', 'vue'].includes(preset)) {
+        const projectName = this.getProjectSlug();
+        return `["pnpm", "nx", "serve", "${projectName}", "--host", "0.0.0.0", "--port", "${port}"]`;
+      }
+    }
+    if (profile.language.includes('JavaScript') || profile.isJsTs) {
       return '["pnpm", "start"]';
     }
-    if (this.answers.language?.includes('Python')) {
+    if (profile.isPython) {
       return '["python", "src/main.py"]';
     }
-    if (this.isJavaLanguage()) {
-      return '["java", "-jar", "target/app.jar"]';
+    if (profile.isJava) {
+      const projectName = this.getProjectSlug();
+      return `["sh", "-c", "if [ -f apps/${projectName}/target/app.jar ]; then java -jar apps/${projectName}/target/app.jar; else java -jar target/app.jar; fi"]`;
     }
-    if (this.answers.language?.includes('Rust')) {
+    if (profile.isRust) {
       return '["./target/release/app"]';
     }
     return '["echo", "Configure your startup command"]';
   }
 
-  getDockerComposeContent() {
-    return `version: '3.8'
+  getDockerPort() {
+    return this.getDockerBasePort() + 1;
+  }
 
-services:
-  app:
-    build: .
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=development
-      - PYTHONPATH=/app
-    volumes:
-      - .:/app
-      - /app/node_modules
-    depends_on:
-      - db
-  
+  getDockerBasePort() {
+    if (this.answers.useNx) {
+      const preset = this.getNormalizedNxPreset();
+      const nxPorts = {
+        angular: 4200,
+        react: 3000,
+        vue: 5173,
+        node: 3000,
+        typescript: 3000,
+        java: 8080,
+        dotnet: 5000
+      };
+      return nxPorts[preset] || 3000;
+    }
+
+    const profile = this.getLanguageProfile();
+    if (profile.isJava) {
+      return 8080;
+    }
+    if (profile.isDotnet) {
+      return 5000;
+    }
+    if (profile.isPython) {
+      return 8000;
+    }
+    if (profile.isRust) {
+      return 3000;
+    }
+    if (profile.isJsTs) {
+      return 3000;
+    }
+    return 3000;
+  }
+
+  buildDockerComposeContent() {
+    const includeDb = this.answers.includeDbService;
+    const port = this.getDockerPort();
+    const dependsOn = includeDb ? '    depends_on:\n      - db\n' : '';
+    const dbEnv = includeDb ? `      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=app_db
+      - DB_USER=app_user
+      - DB_PASSWORD=app_password
+      - DATABASE_URL=postgresql://app_user:app_password@db:5432/app_db
+` : '';
+    const volumes = this.getDockerComposeVolumes();
+    const dbService = includeDb ? `
   db:
     image: postgres:15-alpine
     environment:
@@ -1607,13 +2259,43 @@ services:
       - db_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
-
+` : '';
+    const volumeBlock = includeDb ? `
 volumes:
   db_data:
-`;
+` : '';
+
+    return `services:
+  app:
+    build: .
+    ports:
+      - "${port}:${port}"
+    environment:
+      - NODE_ENV=development
+      - PYTHONPATH=/app
+      - PORT=${port}
+${dbEnv}
+${volumes}
+${dependsOn}${dbService}${volumeBlock}`;
   }
 
-  getDockerIgnoreContent() {
+  getDockerComposeVolumes() {
+    const profile = this.getLanguageProfile();
+    if (profile.isJsTs) {
+      return `    volumes:
+      - .:/app
+      - /app/node_modules
+`;
+    }
+    if (profile.isPython) {
+      return `    volumes:
+      - .:/app
+`;
+    }
+    return '';
+  }
+
+  buildDockerIgnoreContent() {
     let content = `# Dependencies
 node_modules
 pnpm-lock.yaml
@@ -1659,8 +2341,9 @@ docker-compose.yml
     return content;
   }
 
-  generateReadme(projectPath) {
-    const readme = `# ${this.answers.repoName || 'Project'}
+  buildReadmeContent() {
+    const dockerPort = this.getDockerPort();
+    return `# ${this.answers.repoName || 'Project'}
 
 ${this.answers.projectDescription || 'Description of your project'}
 
@@ -1701,7 +2384,7 @@ ${this.answers.createDockerfile ? `
 Build and run with Docker:
 \`\`\`bash
 docker build -t ${this.answers.repoName} .
-docker run -p 3000:3000 ${this.answers.repoName}
+docker run -p ${dockerPort}:${dockerPort} ${this.answers.repoName}
 \`\`\`
 
 Or use Docker Compose:
@@ -1734,8 +2417,33 @@ ${this.answers.useGeminiCLI ? 'gemini test' : this.answers.useClaudeCode ? 'clau
 
 MIT License - see LICENSE file for details
 `;
+  }
 
+  generateReadme(projectPath) {
+    const readme = this.buildReadmeContent();
     fs.writeFileSync(path.join(projectPath, 'README.md'), readme);
+  }
+
+  generateEnvFile(projectPath) {
+    const githubUser = (this.answers.githubUser || '').trim();
+    if (!githubUser) {
+      return;
+    }
+
+    const envPath = path.join(projectPath, '.env');
+    const entry = `GITHUB_USER=${githubUser}\n`;
+
+    if (fs.existsSync(envPath)) {
+      const existing = fs.readFileSync(envPath, 'utf8');
+      if (existing.includes('GITHUB_USER=')) {
+        return;
+      }
+      const needsNewline = existing.length > 0 && !existing.endsWith('\n');
+      fs.appendFileSync(envPath, `${needsNewline ? '\n' : ''}${entry}`);
+      return;
+    }
+
+    fs.writeFileSync(envPath, entry);
   }
 
   initializeGit(projectPath) {

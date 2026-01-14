@@ -28,6 +28,46 @@ If you've installed it globally:
 project-wizard
 ```
 
+### Non-Interactive Defaults
+
+You can skip all prompts by passing a preset or project type flag. The wizard will use the same defaults as the interactive flow for every other answer.
+
+Presets:
+
+```bash
+node wizard.js --angular
+node wizard.js --react
+node wizard.js --vue
+node wizard.js --node
+node wizard.js --typescript
+node wizard.js --java
+node wizard.js --dotnet
+```
+
+Project types:
+
+```bash
+node wizard.js --web-app
+node wizard.js --cli-tool
+node wizard.js --library
+node wizard.js --api-service
+node wizard.js --mobile-app
+node wizard.js --other
+```
+
+You can combine one preset with one project type flag (for example, `node wizard.js --react --api-service`).
+
+Extra shortcuts:
+
+```bash
+node wizard.js --name my-project
+node wizard.js --user my-github-handle
+node wizard.js --docker
+node wizard.js --no-docker
+node wizard.js --db
+node wizard.js --no-db
+```
+
 ### The Wizard Flow
 
 The wizard asks you questions in 5 main sections:
@@ -44,9 +84,11 @@ You can answer by typing the number (e.g., `1`) or the full text. Press Enter to
 - **Specific Dependencies**: Optionally list any system-level dependencies you need (comma-separated)
 - **Nx Automation**: If using Nx, choose whether to enable automated project structure
 - **Nx Technology Preset**: If using Nx, choose a preset (TypeScript, Angular, React, Vue, Node, Java, .NET)
+  - When automation is enabled, the wizard runs the Nx generator for the selected preset to scaffold a real app structure.
 
 #### 3. Coding Assistant
-- **AI Assistant**: Choose between Gemini CLI (default), Claude Code, Codex CLI, or None
+- **AI Assistant**: Choose between None (default), Gemini CLI, Claude Code, or Codex CLI
+  - Default assistant is now None unless you choose a different option.
 - **Expected Commands**: Specify which AI commands you'll use most (e.g., `scaffold,build,test`)
 - **Helper Scripts**: Choose whether to generate helper scripts for AI commands
 - **Documentation**: Choose whether to include sample CLI usage documentation
@@ -55,11 +97,13 @@ You can answer by typing the number (e.g., `1`) or the full text. Press Enter to
 - **Deployment Target**: Select Docker container, Kubernetes, Serverless/cloud platform, or Other
 - **Docker Setup**: Choose whether to create Dockerfile and container configuration
 - **Base Image**: If creating Docker files, select your preferred base OS (Alpine, Ubuntu, Debian, or Other)
+  - **Database Service**: For backend presets (Node, Java, .NET), you can optionally include a Postgres service in `docker-compose.yml`
 
 #### 5. GitHub Template
 - **Repository Name**: Enter the name for your GitHub repository
 - **Git Initialization**: Choose whether to initialize a Git repository locally
 - **README Generation**: Choose whether to generate README and contributing guidelines
+- **GitHub Username**: Optionally save your GitHub username to `.env` as `GITHUB_USER`
 - **Versioning**: Choose whether to set up version tagging and release support
 
 ### After the Wizard Completes
@@ -88,6 +132,7 @@ The wizard creates different files depending on your choices:
 ### If Using Nx
 - **`nx.json`**: Nx workspace configuration with appropriate plugins
 - **`package.json`**: Node.js package configuration with Nx scripts
+- **Nx generator output**: Framework-specific scaffolds created when automation is enabled
 
 ### If Not Using Nx
 - Simple project structure with language-specific starter files
@@ -99,11 +144,15 @@ The wizard creates different files depending on your choices:
 
 ### If Docker Selected
 - **`Dockerfile`**: Language-specific Docker configuration
-- **`docker-compose.yml`**: Docker Compose setup for local development
+- **`docker-compose.yml`**: Docker Compose setup for local development (DB service only when opted in for backend presets)
+- Docker ports default to the framework base port plus one (for example, Angular uses 4201)
 - **`.dockerignore`**: Files to exclude from Docker builds
 
 ### If README Selected
 - **`README.md`**: Project documentation with setup instructions
+
+### If GitHub Username Provided
+- **`.env`**: Includes `GITHUB_USER` for local tooling
 
 ### If Git Initialization Selected
 - **`.gitignore`**: Git ignore file with language-specific patterns
@@ -142,6 +191,7 @@ After collecting all answers, the wizard:
 1. Creates the project directory
 2. Generates `devbox.json` with appropriate packages
 3. Sets up project structure (Nx or simple)
+   - When Nx automation is enabled, it runs the preset generator to scaffold the app
 4. Creates AI assistant configs (if selected)
 5. Generates Docker files (if selected)
 6. Creates README (if selected)
@@ -161,7 +211,7 @@ The wizard automatically:
 
 The wizard makes intelligent recommendations:
 - Suggests Nx for JavaScript/TypeScript and Java projects
-- Recommends Gemini CLI by default for AI assistance
+- Defaults to no AI assistant unless you opt in
 - Maps Python package names to system packages (e.g., `ffmpeg-python` → `ffmpeg`)
 - Only includes safe, known system packages in Devbox config
 

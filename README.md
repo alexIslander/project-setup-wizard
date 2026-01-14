@@ -26,11 +26,51 @@ pnpm add -g .
 project-wizard
 ```
 
+### Non-Interactive Defaults
+Run the wizard with a preset or project type flag to skip prompts and use defaults:
+
+```bash
+node wizard.js --angular
+node wizard.js --react
+node wizard.js --vue
+node wizard.js --node
+node wizard.js --typescript
+node wizard.js --java
+node wizard.js --dotnet
+```
+
+Project type shortcuts:
+
+```bash
+node wizard.js --web-app
+node wizard.js --cli-tool
+node wizard.js --library
+node wizard.js --api-service
+node wizard.js --mobile-app
+node wizard.js --other
+```
+
+You can combine one preset with one project type flag (for example, `node wizard.js --react --api-service`).
+
+Extra shortcuts:
+
+```bash
+node wizard.js --name my-project
+node wizard.js --user my-github-handle
+node wizard.js --docker
+node wizard.js --no-docker
+node wizard.js --db
+node wizard.js --no-db
+```
+
+The default AI assistant is now `None` unless you select a different option interactively.
+
 ## Generated Output (varies by answers)
 - `devbox.json` for reproducible tooling.
 - `nx.json` and `package.json` for Nx-based setups.
 - `Dockerfile`, `docker-compose.yml`, and `.dockerignore` for container workflows.
 - `scripts/` with helper commands and AI CLI installers.
+- `.env` with `GITHUB_USER` when provided.
 
 ## Documentation
 - [`docs/how-wizard-works.md`](docs/how-wizard-works.md) - Detailed explanation of the wizard's architecture and flow

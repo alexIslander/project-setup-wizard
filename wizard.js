@@ -92,6 +92,7 @@ class ProjectWizard {
     let dockerOverride = null;
     let dbOverride = null;
     let githubUser = null;
+    let javaFramework = null;
 
     for (let i = 0; i < args.length; i += 1) {
       const arg = args[i];
@@ -176,6 +177,24 @@ class ProjectWizard {
         continue;
       }
 
+      if (key === 'quarkus') {
+        if (javaFramework && javaFramework !== 'quarkus') {
+          console.error('❌ Use only one of --quarkus or --spring-boot.');
+          process.exit(1);
+        }
+        javaFramework = 'quarkus';
+        continue;
+      }
+
+      if (key === 'spring-boot') {
+        if (javaFramework && javaFramework !== 'spring-boot') {
+          console.error('❌ Use only one of --quarkus or --spring-boot.');
+          process.exit(1);
+        }
+        javaFramework = 'spring-boot';
+        continue;
+      }
+
       flags.add(key);
     }
 
@@ -184,6 +203,11 @@ class ProjectWizard {
 
     if (presetFlags.length > 1) {
       console.error('❌ Please provide only one preset flag (e.g., --angular).');
+      process.exit(1);
+    }
+
+    if (javaFramework && presetFlags.length === 1 && presetFlags[0] !== 'java') {
+      console.error('❌ Java framework flags (--spring-boot/--quarkus) can only be used with --java or alone.');
       process.exit(1);
     }
 
@@ -196,14 +220,15 @@ class ProjectWizard {
       showHelp: flags.has('help') || flags.has('h'),
       nonInteractive: presetFlags.length > 0 || projectTypeFlags.length > 0
         || projectName !== null || dockerOverride !== null || dbOverride !== null
-        || githubUser !== null,
+        || githubUser !== null || javaFramework !== null,
       nxPreset: presetFlags.length ? PRESET_FLAG_MAP[presetFlags[0]].nxPreset : null,
       language: presetFlags.length ? PRESET_FLAG_MAP[presetFlags[0]].language : null,
       projectType: projectTypeFlags.length ? PROJECT_TYPE_FLAG_MAP[projectTypeFlags[0]] : null,
       projectName,
       dockerOverride,
       dbOverride,
-      githubUser
+      githubUser,
+      javaFramework
     };
   }
 
@@ -225,7 +250,8 @@ class ProjectWizard {
       includeDocs: true,
       useGeminiCLI: false,
       useClaudeCode: false,
-      useCodexCLI: false
+      useCodexCLI: false,
+      javaFramework: null
     };
 
     this.answers = { ...defaults };
@@ -235,6 +261,13 @@ class ProjectWizard {
     }
     if (cliConfig.language) {
       this.answers.language = cliConfig.language;
+    }
+
+    if (cliConfig.javaFramework) {
+      this.answers.javaFramework = cliConfig.javaFramework;
+      if (!this.answers.language || !this.isJavaLanguage()) {
+        this.answers.language = 'Java (Spring Boot/Quarkus)';
+      }
     }
 
     if (cliConfig.projectName) {
@@ -261,7 +294,8 @@ class ProjectWizard {
       this.answers.nxPreset = this.getDefaultNxPreset();
     }
 
-    this.answers.includeDbService = false;
+    const javaDbDefault = this.isJavaLanguage() && this.answers.createDockerfile;
+    this.answers.includeDbService = javaDbDefault;
     if (this.answers.createDockerfile && typeof cliConfig.dbOverride === 'boolean') {
       const canIncludeDb = this.shouldOfferDatabaseService();
       if (cliConfig.dbOverride && !canIncludeDb) {
@@ -283,6 +317,8 @@ class ProjectWizard {
     console.log('  node wizard.js --node');
     console.log('  node wizard.js --typescript');
     console.log('  node wizard.js --java');
+    console.log('  node wizard.js --spring-boot');
+    console.log('  node wizard.js --quarkus');
     console.log('  node wizard.js --dotnet');
     console.log('  node wizard.js --web-app');
     console.log('  node wizard.js --cli-tool');
@@ -358,6 +394,23 @@ class ProjectWizard {
     );
     
     this.answers.language = this.normalizeOptionAnswer(languageAnswer, languages);
+
+    if (this.isJavaLanguage()) {
+      const javaFrameworks = [
+        'None (basic Java)',
+        'Spring Boot',
+        'Quarkus'
+      ];
+      const frameworkAnswer = await this.ask(
+        'Which Java framework do you want to use?',
+        javaFrameworks,
+        'None (basic Java)'
+      );
+      const frameworkChoice = this.normalizeOptionAnswer(frameworkAnswer, javaFrameworks);
+      this.answers.javaFramework = this.normalizeJavaFramework(frameworkChoice);
+    } else {
+      this.answers.javaFramework = null;
+    }
 
     this.answers.projectDescription = await this.ask(
       'Briefly describe the main purpose or functionality (optional):',
@@ -486,9 +539,10 @@ class ProjectWizard {
       
       this.answers.baseImage = this.normalizeOptionAnswer(imageAnswer, baseImages);
       if (this.shouldOfferDatabaseService()) {
+        const dbDefault = this.isJavaLanguage() ? 'yes' : 'no';
         this.answers.includeDbService = await this.askYesNo(
           'Include a Postgres database service in docker-compose.yml?',
-          'no'
+          dbDefault
         );
       } else {
         this.answers.includeDbService = false;
@@ -577,6 +631,21 @@ class ProjectWizard {
       || raw.includes('quarkus');
   }
 
+  normalizeJavaFramework(choice) {
+    const raw = (choice || '').toLowerCase();
+    if (raw.includes('spring')) {
+      return 'spring-boot';
+    }
+    if (raw.includes('quarkus')) {
+      return 'quarkus';
+    }
+    return null;
+  }
+
+  getJavaFramework() {
+    return this.normalizeJavaFramework(this.answers.javaFramework || '');
+  }
+
   getNormalizedNxPreset() {
     const raw = (this.answers.nxPreset || '').toLowerCase();
     if (raw.includes('angular')) {
@@ -609,7 +678,7 @@ class ProjectWizard {
         label: 'TypeScript',
         docsUrl: 'https://nx.dev/docs/technologies/typescript/introduction',
         plugins: ['@nx/js'],
-        appGenerator: '@nx/js:application',
+        appGenerator: '',
         libGenerator: '@nx/js:library',
         usesJs: true
       },
@@ -668,7 +737,7 @@ class ProjectWizard {
 
   getNxPluginVersion(packageName) {
     if (packageName === '@nx-dotnet/core') {
-      return '^2.0.0';
+      return '2.2.0';
     }
     return '^17.0.0';
   }
@@ -690,7 +759,7 @@ class ProjectWizard {
       vue: ['--interactive=false'],
       node: ['--interactive=false'],
       java: ['--interactive=false'],
-      dotnet: ['--interactive=false']
+      dotnet: ['--interactive=false', '--language="C#"', '--template=webapi']
     };
   }
 
@@ -1035,7 +1104,7 @@ class ProjectWizard {
       return 'cargo run';
     }
     if (profile.isJava) {
-      return 'mvn -q -DskipTests package && java -jar target/app.jar';
+      return this.getJavaDevCommand();
     }
     if (profile.isDotnet) {
       return 'dotnet run';
@@ -1055,7 +1124,7 @@ class ProjectWizard {
       return 'cargo build --release';
     }
     if (profile.isJava) {
-      return 'mvn clean package';
+      return this.getJavaBuildCommand();
     }
     if (profile.isDotnet) {
       return 'dotnet build';
@@ -1078,12 +1147,38 @@ class ProjectWizard {
       return 'cargo test';
     }
     if (profile.isJava) {
-      return 'mvn test';
+      return this.getJavaTestCommand();
     }
     if (profile.isDotnet) {
       return 'if ls tests/*.csproj >/dev/null 2>&1; then dotnet test; else echo "No tests configured yet"; fi';
     }
     return 'echo "Configure your test command"';
+  }
+
+  getJavaDevCommand() {
+    const framework = this.getJavaFramework();
+    if (framework === 'spring-boot') {
+      return 'mvn spring-boot:run';
+    }
+    if (framework === 'quarkus') {
+      return 'JAVA_TOOL_OPTIONS="-Dnet.bytebuddy.experimental=true" mvn quarkus:dev';
+    }
+    return 'mvn -q -DskipTests package && java -jar target/app.jar';
+  }
+
+  getJavaBuildCommand() {
+    const framework = this.getJavaFramework();
+    if (framework === 'spring-boot' || framework === 'quarkus') {
+      if (framework === 'quarkus') {
+        return 'JAVA_TOOL_OPTIONS="-Dnet.bytebuddy.experimental=true" mvn -q -DskipTests package';
+      }
+      return 'mvn -q -DskipTests package';
+    }
+    return 'mvn -q -DskipTests package';
+  }
+
+  getJavaTestCommand() {
+    return 'mvn -q test';
   }
 
   tryGenerateNxApplication(projectPath, projectName, presetKey, preset) {
@@ -1105,8 +1200,12 @@ class ProjectWizard {
       NX_INTERACTIVE: 'false'
     };
 
+    const useDevbox = presetKey === 'dotnet' && this.isDevboxAvailable();
+    const runCommand = command =>
+      execSync(useDevbox ? `devbox run -- ${command}` : command, { cwd: projectPath, stdio: 'inherit', env });
+
     try {
-      execSync('pnpm install', { cwd: projectPath, stdio: 'inherit', env });
+      runCommand('pnpm install');
     } catch (error) {
       console.warn('⚠️  pnpm install failed. Skipping Nx generator and using minimal scaffold.');
       return false;
@@ -1116,10 +1215,19 @@ class ProjectWizard {
     const generatorCommand = ['pnpm exec nx g', preset.appGenerator, projectName, ...flags].join(' ');
 
     try {
-      execSync(generatorCommand, { cwd: projectPath, stdio: 'inherit', env });
+      runCommand(generatorCommand);
       return true;
     } catch (error) {
       console.warn('⚠️  Nx generator failed. Falling back to minimal scaffold.');
+      return false;
+    }
+  }
+
+  isDevboxAvailable() {
+    try {
+      execSync('devbox version', { stdio: 'ignore' });
+      return true;
+    } catch (error) {
       return false;
     }
   }
@@ -1220,6 +1328,31 @@ class ProjectWizard {
     }
 
     this.ensureNxServePort(projectPath, projectName);
+
+    if (presetKey === 'dotnet') {
+      this.normalizeDotnetModuleBoundariesTarget(projectPath);
+    }
+  }
+
+  normalizeDotnetModuleBoundariesTarget(projectPath) {
+    const targetPath = path.join(projectPath, 'Directory.Build.targets');
+    if (!fs.existsSync(targetPath)) {
+      return;
+    }
+    const content = fs.readFileSync(targetPath, 'utf8');
+    let updated = content.replace(
+      /node_modules\/\.pnpm\/[^/]+\/node_modules\/@nx-dotnet\/core\/src\/tasks\/check-module-boundaries\.js/g,
+      'node_modules/@nx-dotnet/core/src/tasks/check-module-boundaries.js'
+    );
+    if (!updated.includes('NX_DOTNET_SKIP_MODULE_BOUNDARIES')) {
+      updated = updated.replace(
+        /<Target Name="CheckNxModuleBoundaries" BeforeTargets="Build">/,
+        '<Target Name="CheckNxModuleBoundaries" BeforeTargets="Build" Condition="\'$(NX_DOTNET_SKIP_MODULE_BOUNDARIES)\' != \'1\'">'
+      );
+    }
+    if (updated !== content) {
+      fs.writeFileSync(targetPath, updated);
+    }
   }
 
   ensureNxServePort(projectPath, projectName) {
@@ -1303,9 +1436,20 @@ class ProjectWizard {
       return '#!/bin/bash\nset -euo pipefail\necho "Building .NET project..."\ndotnet build\nif ls tests/*.csproj >/dev/null 2>&1; then dotnet test; else echo "No tests configured yet"; fi';
     }
     if (profile.isJava) {
-      return '#!/bin/bash\nset -euo pipefail\necho "Building Java project..."\nmvn -q -DskipTests compile\nif [ -d tests ]; then mvn -q test; else echo "No tests configured yet"; fi';
+      return this.getJavaBuildScriptFile();
     }
     return '#!/bin/bash\necho "Build script ready for customization"';
+  }
+
+  getJavaBuildScriptFile() {
+    const framework = this.getJavaFramework();
+    if (framework === 'spring-boot') {
+      return '#!/bin/bash\nset -euo pipefail\necho "Building Spring Boot project..."\nmvn -q -DskipTests package\nmvn -q test';
+    }
+    if (framework === 'quarkus') {
+      return '#!/bin/bash\nset -euo pipefail\necho "Building Quarkus project..."\nmvn -q -DskipTests package\nmvn -q test';
+    }
+    return '#!/bin/bash\nset -euo pipefail\necho "Building Java project..."\nmvn -q -DskipTests package\nmvn -q test';
   }
 
   getNxProjectConfig(projectName) {
@@ -1379,9 +1523,9 @@ class ProjectWizard {
       serveCwd = basePath;
       testCwd = basePath;
     } else if (profile.isJava) {
-      buildCommand = 'mvn -q -DskipTests compile';
-      serveCommand = 'mvn -q -DskipTests package && java -jar target/app.jar';
-      testCommand = 'mvn -q test';
+      buildCommand = this.getJavaBuildCommand();
+      serveCommand = this.getJavaDevCommand();
+      testCommand = this.getJavaTestCommand();
       buildCwd = basePath;
       serveCwd = basePath;
       testCwd = basePath;
@@ -1624,12 +1768,58 @@ mod tests {
     }
 
     if (profile.isJava) {
-      const packageName = this.getJavaPackageName();
-      const packagePath = path.join(projectPath, 'src', 'main', 'java', ...packageName.split('.'));
-      fs.mkdirSync(packagePath, { recursive: true });
+      this.createJavaScaffold(projectPath);
+      return;
+    }
 
-      const hasDb = this.answers.includeDbService;
-      const dbDependency = hasDb ? `
+    if (profile.isDotnet) {
+      const projectName = this.getDotnetProjectName();
+      const csproj = `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+</Project>
+`;
+      fs.writeFileSync(path.join(projectPath, `${projectName}.csproj`), csproj);
+
+      const content = `namespace ${projectName};
+
+internal class Program
+{
+  private static void Main(string[] args)
+  {
+    Console.WriteLine("Hello, World!");
+    Console.WriteLine("Project: ${this.answers.repoName}");
+  }
+}
+`;
+      fs.writeFileSync(path.join(sourceDir, 'Program.cs'), content);
+    }
+  }
+
+  createJavaScaffold(projectPath) {
+    const framework = this.getJavaFramework();
+    if (framework === 'spring-boot') {
+      this.createSpringBootScaffold(projectPath);
+      return;
+    }
+    if (framework === 'quarkus') {
+      this.createQuarkusScaffold(projectPath);
+      return;
+    }
+    this.createBasicJavaScaffold(projectPath);
+  }
+
+  createBasicJavaScaffold(projectPath) {
+    const packageName = this.getJavaPackageName();
+    const packagePath = path.join(projectPath, 'src', 'main', 'java', ...packageName.split('.'));
+    fs.mkdirSync(packagePath, { recursive: true });
+
+    const hasDb = this.answers.includeDbService;
+    const dbDependency = hasDb ? `
   <dependencies>
     <dependency>
       <groupId>org.postgresql</groupId>
@@ -1639,7 +1829,7 @@ mod tests {
   </dependencies>
 ` : '';
 
-      const pom = `<project xmlns="http://maven.apache.org/POM/4.0.0"
+    const pom = `<project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
@@ -1647,8 +1837,8 @@ mod tests {
   <artifactId>${this.getProjectSlug()}</artifactId>
   <version>0.1.0</version>
   <properties>
-    <maven.compiler.source>17</maven.compiler.source>
-    <maven.compiler.target>17</maven.compiler.target>
+    <maven.compiler.source>25</maven.compiler.source>
+    <maven.compiler.target>25</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
 ${dbDependency}
@@ -1679,19 +1869,19 @@ ${dbDependency}
   </build>
 </project>
 `;
-      fs.writeFileSync(path.join(projectPath, 'pom.xml'), pom);
+    fs.writeFileSync(path.join(projectPath, 'pom.xml'), pom);
 
-      const dbImports = hasDb ? `
+    const dbImports = hasDb ? `
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;` : '';
 
-      const dbLogic = hasDb ? `
+    const dbLogic = hasDb ? `
     runDbCheck();
 ` : '';
 
-      const dbHelper = hasDb ? `
+    const dbHelper = hasDb ? `
   private static void runDbCheck() {
     String host = System.getenv("DB_HOST");
     String name = System.getenv("DB_NAME");
@@ -1715,7 +1905,7 @@ import java.sql.Statement;` : '';
   }
 ` : '';
 
-      const content = `package ${packageName};
+    const content = `package ${packageName};
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -1726,7 +1916,29 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;${dbImports}
 
 public class App {
-  private static final int DEFAULT_PORT = 8080;
+  private static final int DEFAULT_PORT = ${this.getDockerPort()};
+  private static final String OPENAPI_JSON =
+    "{\\n" +
+    "  \\"openapi\\": \\"3.0.3\\",\\n" +
+    "  \\"info\\": {\\n" +
+    "    \\"title\\": \\"Project Setup Wizard API\\",\\n" +
+    "    \\"version\\": \\"0.1.0\\"\\n" +
+    "  },\\n" +
+    "  \\"paths\\": {\\n" +
+    "    \\"/\\": {\\n" +
+    "      \\"get\\": {\\n" +
+    "        \\"summary\\": \\"Root\\",\\n" +
+    "        \\"responses\\": { \\"200\\": { \\"description\\": \\"OK\\" } }\\n" +
+    "      }\\n" +
+    "    },\\n" +
+    "    \\"/health\\": {\\n" +
+    "      \\"get\\": {\\n" +
+    "        \\"summary\\": \\"Health\\",\\n" +
+    "        \\"responses\\": { \\"200\\": { \\"description\\": \\"OK\\" } }\\n" +
+    "      }\\n" +
+    "    }\\n" +
+    "  }\\n" +
+    "}\\n";
 
   public static void main(String[] args) throws Exception {
     System.out.println("Project: ${this.answers.repoName}");
@@ -1745,13 +1957,33 @@ ${dbLogic}
             new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8)
           );
           OutputStream out = socket.getOutputStream();
+          String requestLine = reader.readLine();
+          String path = "/";
+          if (requestLine != null && !requestLine.isBlank()) {
+            String[] parts = requestLine.split(" ");
+            if (parts.length >= 2) {
+              path = parts[1];
+            }
+          }
           String line;
           while ((line = reader.readLine()) != null && !line.isEmpty()) {
             // Consume request headers.
           }
-          byte[] body = "OK".getBytes(StandardCharsets.UTF_8);
-          String header = "HTTP/1.1 200 OK\\r\\n"
-            + "Content-Type: text/plain; charset=utf-8\\r\\n"
+          String statusLine = "HTTP/1.1 200 OK";
+          String contentType = "text/plain; charset=utf-8";
+          String responseBody = "OK";
+          if ("/openapi.json".equals(path) || "/swagger.json".equals(path)) {
+            contentType = "application/json; charset=utf-8";
+            responseBody = OPENAPI_JSON;
+          } else if ("/health".equals(path) || "/".equals(path)) {
+            responseBody = "OK";
+          } else {
+            statusLine = "HTTP/1.1 404 Not Found";
+            responseBody = "Not Found";
+          }
+          byte[] body = responseBody.getBytes(StandardCharsets.UTF_8);
+          String header = statusLine + "\\r\\n"
+            + "Content-Type: " + contentType + "\\r\\n"
             + "Content-Length: " + body.length + "\\r\\n\\r\\n";
           out.write(header.getBytes(StandardCharsets.UTF_8));
           out.write(body);
@@ -1777,35 +2009,520 @@ ${dbLogic}
 ${dbHelper}
 }
 `;
-      fs.writeFileSync(path.join(packagePath, 'App.java'), content);
-      return;
-    }
+    fs.writeFileSync(path.join(packagePath, 'App.java'), content);
+  }
 
-    if (profile.isDotnet) {
-      const projectName = this.getDotnetProjectName();
-      const csproj = `<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
-</Project>
+  createSpringBootScaffold(projectPath) {
+    const packageName = this.getJavaPackageName();
+    const basePackage = packageName.split('.').slice(0, -1).join('.');
+    const packagePath = path.join(projectPath, 'src', 'main', 'java', ...packageName.split('.'));
+    const resourcePath = path.join(projectPath, 'src', 'main', 'resources');
+    fs.mkdirSync(packagePath, { recursive: true });
+    fs.mkdirSync(resourcePath, { recursive: true });
+
+    const hasDb = this.answers.includeDbService;
+    const dbDependencies = hasDb ? `
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>` : '';
+
+    const pom = `<project xmlns="http://maven.apache.org/POM/4.0.0"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.3.2</version>
+    <relativePath />
+  </parent>
+  <groupId>${basePackage}</groupId>
+  <artifactId>${this.getProjectSlug()}</artifactId>
+  <version>0.1.0</version>
+  <name>${this.answers.repoName}</name>
+  <description>${this.answers.projectDescription}</description>
+  <properties>
+    <java.version>21</java.version>
+    <maven.compiler.release>21</maven.compiler.release>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+      <version>2.5.0</version>
+    </dependency>${dbDependencies}
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+  <build>
+    <finalName>app</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>
 `;
-      fs.writeFileSync(path.join(projectPath, `${projectName}.csproj`), csproj);
+    fs.writeFileSync(path.join(projectPath, 'pom.xml'), pom);
 
-      const content = `namespace ${projectName};
+    const dbProperties = hasDb ? `
+spring.datasource.url=jdbc:postgresql://\${DB_HOST:localhost}:\${DB_PORT:5432}/\${DB_NAME:app_db}
+spring.datasource.username=\${DB_USER:app_user}
+spring.datasource.password=\${DB_PASSWORD:app_password}
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.open-in-view=false
+` : '';
 
-internal class Program
-{
-  private static void Main(string[] args)
-  {
-    Console.WriteLine("Hello, World!");
-    Console.WriteLine("Project: ${this.answers.repoName}");
+    const appProperties = `server.port=\${PORT:8080}
+spring.application.name=${this.getProjectSlug()}
+management.endpoints.web.exposure.include=health,info,metrics
+management.endpoint.health.show-details=always
+springdoc.api-docs.path=/openapi
+springdoc.swagger-ui.path=/swagger-ui
+logging.level.root=INFO
+logging.level.${packageName}=DEBUG${dbProperties}
+`;
+    fs.writeFileSync(path.join(resourcePath, 'application.properties'), appProperties);
+
+    const appClass = `package ${packageName};
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class Application {
+  private static final Logger log = LoggerFactory.getLogger(Application.class);
+
+  public static void main(String[] args) {
+    log.info("Starting Spring Boot application...");
+    SpringApplication.run(Application.class, args);
   }
 }
 `;
-      fs.writeFileSync(path.join(sourceDir, 'Program.cs'), content);
+    fs.writeFileSync(path.join(packagePath, 'Application.java'), appClass);
+
+    const apiPath = path.join(packagePath, 'api');
+    fs.mkdirSync(apiPath, { recursive: true });
+
+    const helloController = `package ${packageName}.api;
+
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class HelloController {
+  private static final Logger log = LoggerFactory.getLogger(HelloController.class);
+
+  @GetMapping("/api/hello")
+  public Map<String, String> hello() {
+    log.info("Handling /api/hello request");
+    return Map.of("message", "Hello from Spring Boot");
+  }
+}
+`;
+    fs.writeFileSync(path.join(apiPath, 'HelloController.java'), helloController);
+
+    const swaggerRedirect = `package ${packageName}.api;
+
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.GetMapping;
+
+@Controller
+public class SwaggerRedirectController {
+  @GetMapping("/")
+  public String redirectToSwagger() {
+    return "redirect:/swagger-ui";
+  }
+}
+`;
+    fs.writeFileSync(path.join(apiPath, 'SwaggerRedirectController.java'), swaggerRedirect);
+
+    if (hasDb) {
+      const modelPath = path.join(packagePath, 'model');
+      const repoPath = path.join(packagePath, 'repository');
+      fs.mkdirSync(modelPath, { recursive: true });
+      fs.mkdirSync(repoPath, { recursive: true });
+
+      const noteEntity = `package ${packageName}.model;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.Table;
+import java.time.Instant;
+
+@Entity
+@Table(name = "notes")
+public class Note {
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
+
+  @Column(nullable = false)
+  private String message;
+
+  @Column(nullable = false, name = "created_at")
+  private Instant createdAt;
+
+  protected Note() {}
+
+  public Note(String message) {
+    this.message = message;
+  }
+
+  @PrePersist
+  void onCreate() {
+    if (createdAt == null) {
+      createdAt = Instant.now();
+    }
+  }
+
+  public Long getId() {
+    return id;
+  }
+
+  public String getMessage() {
+    return message;
+  }
+
+  public Instant getCreatedAt() {
+    return createdAt;
+  }
+}
+`;
+      fs.writeFileSync(path.join(modelPath, 'Note.java'), noteEntity);
+
+      const noteRepository = `package ${packageName}.repository;
+
+import ${packageName}.model.Note;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface NoteRepository extends JpaRepository<Note, Long> {}
+`;
+      fs.writeFileSync(path.join(repoPath, 'NoteRepository.java'), noteRepository);
+
+      const noteController = `package ${packageName}.api;
+
+import ${packageName}.model.Note;
+import ${packageName}.repository.NoteRepository;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import java.time.Instant;
+import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/notes")
+public class NoteController {
+  private static final Logger log = LoggerFactory.getLogger(NoteController.class);
+  private final NoteRepository repository;
+
+  public NoteController(NoteRepository repository) {
+    this.repository = repository;
+  }
+
+  @PostMapping
+  public NoteResponse create(@Valid @RequestBody NoteRequest request) {
+    Note note = new Note(request.message());
+    Note saved = repository.save(note);
+    log.info("Stored note id={}", saved.getId());
+    return new NoteResponse(saved.getId(), saved.getMessage(), saved.getCreatedAt());
+  }
+
+  @GetMapping
+  public List<NoteResponse> list() {
+    return repository.findAll().stream()
+      .map(note -> new NoteResponse(note.getId(), note.getMessage(), note.getCreatedAt()))
+      .toList();
+  }
+
+  public record NoteRequest(@NotBlank String message) {}
+
+  public record NoteResponse(Long id, String message, Instant createdAt) {}
+}
+`;
+      fs.writeFileSync(path.join(apiPath, 'NoteController.java'), noteController);
+    }
+  }
+
+  createQuarkusScaffold(projectPath) {
+    const packageName = this.getJavaPackageName();
+    const basePackage = packageName.split('.').slice(0, -1).join('.');
+    const packagePath = path.join(projectPath, 'src', 'main', 'java', ...packageName.split('.'));
+    const resourcePath = path.join(projectPath, 'src', 'main', 'resources');
+    fs.mkdirSync(packagePath, { recursive: true });
+    fs.mkdirSync(resourcePath, { recursive: true });
+
+    const hasDb = this.answers.includeDbService;
+    const dbDependencies = hasDb ? `
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-hibernate-orm-panache</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-jdbc-postgresql</artifactId>
+    </dependency>` : '';
+
+    const pom = `<project xmlns="http://maven.apache.org/POM/4.0.0"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>${basePackage}</groupId>
+  <artifactId>${this.getProjectSlug()}</artifactId>
+  <version>0.1.0</version>
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.release>21</maven.compiler.release>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+    <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+    <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+    <quarkus.platform.version>3.15.2</quarkus.platform.version>
+  </properties>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>\${quarkus.platform.group-id}</groupId>
+        <artifactId>\${quarkus.platform.artifact-id}</artifactId>
+        <version>\${quarkus.platform.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-rest</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-rest-jackson</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-smallrye-openapi</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-swagger-ui</artifactId>
+    </dependency>${dbDependencies}
+  </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-maven-plugin</artifactId>
+        <version>\${quarkus.platform.version}</version>
+        <extensions>true</extensions>
+        <executions>
+          <execution>
+            <goals>
+              <goal>build</goal>
+              <goal>generate-code</goal>
+              <goal>generate-code-tests</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+`;
+    fs.writeFileSync(path.join(projectPath, 'pom.xml'), pom);
+
+    const dbProperties = hasDb ? `
+quarkus.datasource.db-kind=postgresql
+quarkus.datasource.username=\${DB_USER:app_user}
+quarkus.datasource.password=\${DB_PASSWORD:app_password}
+quarkus.datasource.jdbc.url=jdbc:postgresql://\${DB_HOST:localhost}:\${DB_PORT:5432}/\${DB_NAME:app_db}
+quarkus.hibernate-orm.database.generation=update
+quarkus.hibernate-orm.log.sql=true
+` : '';
+
+    const appProperties = `quarkus.http.port=\${PORT:8080}
+quarkus.http.host=0.0.0.0
+quarkus.log.level=INFO
+quarkus.log.category."${packageName}".level=DEBUG
+quarkus.smallrye-openapi.info-title=${this.answers.repoName}
+quarkus.smallrye-openapi.info-version=0.1.0
+quarkus.swagger-ui.always-include=true${dbProperties}
+`;
+    fs.writeFileSync(path.join(resourcePath, 'application.properties'), appProperties);
+
+    const helloResource = `package ${packageName}.api;
+
+import java.util.Map;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+import org.jboss.logging.Logger;
+
+@Path("/api/hello")
+@Produces(MediaType.APPLICATION_JSON)
+public class HelloResource {
+  private static final Logger log = Logger.getLogger(HelloResource.class);
+
+  @GET
+  public Map<String, String> hello() {
+    log.info("Handling /api/hello request");
+    return Map.of("message", "Hello from Quarkus");
+  }
+}
+`;
+    const apiPath = path.join(packagePath, 'api');
+    fs.mkdirSync(apiPath, { recursive: true });
+    fs.writeFileSync(path.join(apiPath, 'HelloResource.java'), helloResource);
+
+    const healthResource = `package ${packageName}.api;
+
+import java.util.Map;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+
+@Path("/api/health")
+@Produces(MediaType.APPLICATION_JSON)
+public class HealthResource {
+  @GET
+  public Map<String, String> health() {
+    return Map.of("status", "UP");
+  }
+}
+`;
+    fs.writeFileSync(path.join(apiPath, 'HealthResource.java'), healthResource);
+
+    const swaggerRedirect = `package ${packageName}.api;
+
+import java.net.URI;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.core.Response;
+
+@Path("/")
+public class SwaggerRedirectResource {
+  @GET
+  public Response redirectToSwagger() {
+    return Response.seeOther(URI.create("/q/swagger-ui")).build();
+  }
+}
+`;
+    fs.writeFileSync(path.join(apiPath, 'SwaggerRedirectResource.java'), swaggerRedirect);
+
+    if (hasDb) {
+      const modelPath = path.join(packagePath, 'model');
+      fs.mkdirSync(modelPath, { recursive: true });
+
+      const noteEntity = `package ${packageName}.model;
+
+import io.quarkus.hibernate.orm.panache.PanacheEntity;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.Table;
+import java.time.Instant;
+
+@Entity
+@Table(name = "notes")
+public class Note extends PanacheEntity {
+  @Column(nullable = false)
+  public String message;
+
+  @Column(nullable = false, name = "created_at")
+  public Instant createdAt;
+
+  @PrePersist
+  void onCreate() {
+    if (createdAt == null) {
+      createdAt = Instant.now();
+    }
+  }
+}
+`;
+      fs.writeFileSync(path.join(modelPath, 'Note.java'), noteEntity);
+
+      const noteResource = `package ${packageName}.api;
+
+import ${packageName}.model.Note;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+import java.util.List;
+import org.jboss.logging.Logger;
+
+@Path("/api/notes")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class NoteResource {
+  private static final Logger log = Logger.getLogger(NoteResource.class);
+
+  @POST
+  @Transactional
+  public Note create(NoteRequest request) {
+    Note note = new Note();
+    note.message = request.message;
+    note.persist();
+    log.infof("Stored note id=%d", note.id);
+    return note;
+  }
+
+  @GET
+  public List<Note> list() {
+    return Note.listAll();
+  }
+
+  public static class NoteRequest {
+    public String message;
+  }
+}
+`;
+      fs.writeFileSync(path.join(apiPath, 'NoteResource.java'), noteResource);
     }
   }
 
@@ -2087,6 +2804,42 @@ CMD ${this.getDockerCmd()}`;
   buildJavaDockerfileContent() {
     const port = this.getDockerPort();
     const projectName = this.getProjectSlug();
+    const javaFramework = this.getJavaFramework();
+    if (javaFramework === 'quarkus') {
+      return `# Stage 1: Build
+FROM eclipse-temurin:25-jdk AS build
+WORKDIR /app
+RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
+ENV JAVA_TOOL_OPTIONS="-Dnet.bytebuddy.experimental=true"
+COPY . .
+RUN if [ -f apps/${projectName}/pom.xml ]; then mvn -q -DskipTests -f apps/${projectName}/pom.xml package; else mvn -q -DskipTests package; fi
+RUN if [ -d apps/${projectName}/target/quarkus-app ]; then cp -R apps/${projectName}/target/quarkus-app /app/quarkus-app; else cp -R target/quarkus-app /app/quarkus-app; fi
+
+# Stage 2: Final image
+FROM eclipse-temurin:25-jdk
+WORKDIR /app
+ENV PORT=${port}
+COPY --from=build /app/quarkus-app /app/quarkus-app
+EXPOSE ${port}
+ENTRYPOINT ["java", "-jar", "/app/quarkus-app/quarkus-run.jar"]`;
+    }
+    if (javaFramework === 'spring-boot') {
+      return `# Stage 1: Build
+FROM eclipse-temurin:25-jdk AS build
+WORKDIR /app
+RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
+COPY . .
+RUN if [ -f apps/${projectName}/pom.xml ]; then mvn -q -DskipTests -f apps/${projectName}/pom.xml package; else mvn -q -DskipTests package; fi
+RUN if [ -f apps/${projectName}/target/app.jar ]; then cp apps/${projectName}/target/app.jar /app/app.jar; else cp target/app.jar /app/app.jar; fi
+
+# Stage 2: Final image
+FROM eclipse-temurin:25-jdk
+WORKDIR /app
+ENV PORT=${port}
+COPY --from=build /app/app.jar /app/app.jar
+EXPOSE ${port}
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]`;
+    }
     return `# Stage 1: Build
 FROM eclipse-temurin:25-jdk AS build
 WORKDIR /app
@@ -2118,6 +2871,9 @@ ENTRYPOINT ["java", "-jar", "/app/app.jar"]`;
     const profile = this.getLanguageProfile();
     if (this.answers.language?.includes('Node') || profile.isJsTs) {
       return this.answers.baseImage?.toLowerCase() === 'alpine' ? 'node:18-alpine' : 'node:18';
+    }
+    if (profile.isDotnet) {
+      return 'mcr.microsoft.com/dotnet/sdk:8.0';
     }
     if (profile.isJava) {
       return 'eclipse-temurin:25-jdk';
@@ -2164,6 +2920,11 @@ ENTRYPOINT ["java", "-jar", "/app/app.jar"]`;
     if (profile.isPython) {
       return '# Python build completed during dependency installation';
     }
+    if (profile.isDotnet) {
+      const projectName = this.getDotnetProjectName();
+      const projectPath = `apps/${this.getProjectSlug()}/${projectName}.csproj`;
+      return `ENV NX_DOTNET_SKIP_MODULE_BOUNDARIES=1\nRUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists/*\nRUN npm install -g pnpm\nRUN pnpm install\nRUN dotnet restore ${projectPath}\nRUN dotnet build ${projectPath} -c Release`;
+    }
     // Rust and Java builds are handled in copy instructions
     return '# Build completed';
   }
@@ -2189,8 +2950,17 @@ ENTRYPOINT ["java", "-jar", "/app/app.jar"]`;
       return '["python", "src/main.py"]';
     }
     if (profile.isJava) {
+      const javaFramework = this.getJavaFramework();
       const projectName = this.getProjectSlug();
+      if (javaFramework === 'quarkus') {
+        return `["sh", "-c", "if [ -f apps/${projectName}/target/quarkus-app/quarkus-run.jar ]; then java -jar apps/${projectName}/target/quarkus-app/quarkus-run.jar; else java -jar target/quarkus-app/quarkus-run.jar; fi"]`;
+      }
       return `["sh", "-c", "if [ -f apps/${projectName}/target/app.jar ]; then java -jar apps/${projectName}/target/app.jar; else java -jar target/app.jar; fi"]`;
+    }
+    if (profile.isDotnet) {
+      const projectName = this.getDotnetProjectName();
+      const projectPath = `apps/${this.getProjectSlug()}/${projectName}.csproj`;
+      return `["dotnet", "run", "--project", "${projectPath}", "--urls", "http://0.0.0.0:${port}"]`;
     }
     if (profile.isRust) {
       return '["./target/release/app"]';
@@ -2343,6 +3113,7 @@ docker-compose.yml
 
   buildReadmeContent() {
     const dockerPort = this.getDockerPort();
+    const javaReadme = this.buildJavaReadmeSection();
     return `# ${this.answers.repoName || 'Project'}
 
 ${this.answers.projectDescription || 'Description of your project'}
@@ -2405,6 +3176,8 @@ ${this.answers.useGeminiCLI ? 'gemini build' : this.answers.useClaudeCode ? 'cla
 ${this.answers.useGeminiCLI ? 'gemini test' : this.answers.useClaudeCode ? 'claude test' : 'codex test'}
 \`\`\`` : ''}
 
+${javaReadme}
+
 ## Contributing
 
 1. Fork the repository
@@ -2416,6 +3189,89 @@ ${this.answers.useGeminiCLI ? 'gemini test' : this.answers.useClaudeCode ? 'clau
 ## License
 
 MIT License - see LICENSE file for details
+`;
+  }
+
+  getJavaFrameworkLabel() {
+    const framework = this.getJavaFramework();
+    if (framework === 'spring-boot') {
+      return 'Spring Boot';
+    }
+    if (framework === 'quarkus') {
+      return 'Quarkus';
+    }
+    return 'Basic Java';
+  }
+
+  buildJavaReadmeSection() {
+    if (!this.isJavaLanguage()) {
+      return '';
+    }
+
+    const framework = this.getJavaFramework();
+    const label = this.getJavaFrameworkLabel();
+    const localPort = this.getDockerBasePort();
+    const dockerPort = this.getDockerPort();
+    const hasDb = this.answers.includeDbService;
+
+    let swaggerUi = `http://localhost:${localPort}/swagger.json`;
+    let openApi = `http://localhost:${localPort}/openapi.json`;
+    if (framework === 'spring-boot') {
+      swaggerUi = `http://localhost:${localPort}/swagger-ui`;
+      openApi = `http://localhost:${localPort}/openapi`;
+    } else if (framework === 'quarkus') {
+      swaggerUi = `http://localhost:${localPort}/q/swagger-ui`;
+      openApi = `http://localhost:${localPort}/q/openapi`;
+    }
+
+    const dockerSwaggerUi = swaggerUi.replace(`:${localPort}`, `:${dockerPort}`);
+    const dockerOpenApi = openApi.replace(`:${localPort}`, `:${dockerPort}`);
+
+    const dbSection = hasDb ? `
+### Database Example
+
+Write a note to Postgres:
+\`\`\`bash
+curl -X POST http://localhost:${localPort}/api/notes \\
+  -H "Content-Type: application/json" \\
+  -d '{"message":"Hello from the wizard"}'
+\`\`\`
+
+List notes:
+\`\`\`bash
+curl http://localhost:${localPort}/api/notes
+\`\`\`
+` : '';
+
+    let references = '';
+    if (framework === 'quarkus') {
+      references = `
+- https://quarkus.io/get-started/
+- https://quarkus.io/guides/rest-json
+- https://quarkus.io/guides/openapi-swaggerui
+`;
+    } else if (framework === 'spring-boot') {
+      references = `
+- https://www.springboottutorial.com/spring-boot-starter-projects
+- https://www.baeldung.com/category/spring-boot/tag/spring-annotations
+- https://www.baeldung.com/spring-boot-actuator-enable-endpoints
+- https://www.baeldung.com/java-spring-security-permit-swagger-ui
+- https://www.baeldung.com/spring-boot-data-sql-and-schema-sql
+`;
+    }
+
+    const jvmTarget = framework === 'quarkus' || framework === 'spring-boot' ? '21 (runs on Java 25)' : '25';
+    return `
+
+## Java Framework
+
+- **Framework**: ${label}
+- **JVM Target**: ${jvmTarget}
+- **Swagger UI**: ${swaggerUi} (Docker: ${dockerSwaggerUi})
+- **OpenAPI JSON**: ${openApi} (Docker: ${dockerOpenApi})
+${framework === 'spring-boot' ? '- **Actuator Health**: http://localhost:' + localPort + '/actuator/health' : ''}
+${dbSection}
+${references ? '### References\n' + references : ''}
 `;
   }
 
@@ -2466,6 +3322,7 @@ MIT License - see LICENSE file for details
   getGitignoreContent() {
     let content = `# Dependencies
 node_modules/
+.nx/
 target/
 build/
 dist/

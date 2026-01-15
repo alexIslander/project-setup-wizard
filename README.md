@@ -36,6 +36,8 @@ node wizard.js --vue
 node wizard.js --node
 node wizard.js --typescript
 node wizard.js --java
+node wizard.js --spring-boot
+node wizard.js --quarkus
 node wizard.js --dotnet
 ```
 

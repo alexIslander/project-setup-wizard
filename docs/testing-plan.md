@@ -25,6 +25,7 @@ This document defines a manual testing plan for the Project Setup Wizard, includ
 | Deployment Target | Docker container; Kubernetes; Serverless/cloud platform; Other | Docker container | Accept number or text |
 | Create Dockerfile | yes/no | yes | If no, skips Docker outputs |
 | Docker Base Image | Alpine; Ubuntu; Debian; Other | Alpine | Asked only when Create Dockerfile = yes |
+| Include Database Service | yes/no | no | Asked only when Create Dockerfile = yes and backend preset (Node, Java, .NET) |
 | Repository Name | Free text | my-project | Used for directory and README |
 | Initialize Git | yes/no | yes | Creates .gitignore and initial commit |
 | Generate README | yes/no | yes | Adds README.md |
@@ -42,6 +43,7 @@ Each scenario should confirm prompt flow, generated files, and terminal next-ste
 | S4 | Library | Java (Spring Boot/Quarkus) | yes | None | yes (Ubuntu) | yes | yes | Java Nx plugins and Docker |
 | S5 | Mobile app | .NET | no | Gemini CLI | no | no | yes | .NET build script |
 | S6 | Other | Other | no | None | no | no | no | Free-text inputs, minimal output |
+| S7 | API service | JavaScript/TypeScript | yes (Node preset) | None | yes (Alpine, DB on) | yes | yes | Ensure docker-compose includes Postgres only when opted in |
 
 ## Assistant-Specific Checks
 
@@ -59,13 +61,24 @@ Each scenario should confirm prompt flow, generated files, and terminal next-ste
 | JavaScript/TypeScript | node:22-alpine | pnpm install + pnpm run build |
 | Python | python:3.12-alpine | pip install -r requirements.txt |
 | Rust | rust:1.70 | cargo build --release |
-| Java | openjdk:25-alpine | mvn package |
+| Java | eclipse-temurin:25-jdk (multi-stage) | mvn package + java -jar /app/app.jar |
 | Other | alpine:latest | Custom commands |
+
+Docker port defaults (Dockerfile `EXPOSE` + docker-compose mapping):
+- Angular: 4201
+- React: 3001
+- Vue: 5174
+- Node/TypeScript: 3001
+- Java: 8081
+- .NET: 5001
+- Python: 8001
 
 ## Nx Checks
 - `nx.json` created with default cache settings
 - `package.json` created with Nx scripts
 - Plugins align to Nx technology preset
+- Preset generator outputs framework-specific app structure when automation is enabled
+- Angular preset pins TypeScript to a 5.3.x range compatible with Angular 17
 
 ## Non-Nx Checks
 - `src/`, `docs/`, `scripts/`, `tests/` created
@@ -77,6 +90,9 @@ Each scenario should confirm prompt flow, generated files, and terminal next-ste
 - Numbered selection works (e.g., "1" maps to first option)
 - Comma-separated lists parse and trim correctly
 - Project directory is created with the repository name
+- Docker Compose includes DB service only when opted in for backend presets
+- Dockerfile/Compose port matches the framework default + 1
+- Docker Compose file omits the deprecated `version` field
 
 ## Test Results (Local Manual Run)
 
@@ -118,7 +134,7 @@ Nx preset smoke runs (wizard CLI, no Dockerfile/git/README):
 | React | nx-preset-react | OK | `nx.json` + `apps/nx-preset-react/project.json` present; `package.json` includes `@nx/react` + `@nx/js`. |
 | Vue | nx-preset-vue | OK | `nx.json` + `apps/nx-preset-vue/project.json` present; `package.json` includes `@nx/vue` + `@nx/js`. |
 | Node | nx-preset-node | OK | `nx.json` + `apps/nx-preset-node/project.json` present; `package.json` includes `@nx/node` + `@nx/js`. |
-| Java | nx-preset-java | OK | `nx.json` + `apps/nx-preset-java/project.json` present; `package.json` includes `@nx/java`. |
+| Java | nx-preset-java | OK | `nx.json` + `apps/nx-preset-java/project.json` present; `package.json` includes `nx` only (run-commands + Maven). |
 | .NET | nx-preset-dotnet | OK | `nx.json` + `apps/nx-preset-dotnet/project.json` present; `package.json` includes `@nx-dotnet/core`. |
   vs
   - [x] TypeScript: https://nx.dev/docs/technologies/typescript/generators
@@ -126,7 +142,7 @@ Nx preset smoke runs (wizard CLI, no Dockerfile/git/README):
   - [x] React: https://nx.dev/docs/technologies/react/generators
   - [x] Vue: https://nx.dev/docs/technologies/vue/generators
   - [x] Node: https://nx.dev/docs/technologies/node/generators
-  - [x] Java: https://nx.dev/docs/technologies/java/generators
+  - [x] Java: use `nx:run-commands` with Maven (no generator)
   - [x] .NET: https://nx.dev/docs/technologies/dotnet/generators
 
 ## Test Results (Post-fix)

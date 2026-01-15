@@ -65,6 +65,28 @@ node wizard.js --db
 node wizard.js --no-db
 ```
 
+Examples:
+
+```bash
+node wizard.js --spring-boot --name test-spring-boot-ui --docker
+node wizard.js --quarkus --name test-quarkus-ui --docker
+```
+
+All flags example:
+
+```bash
+node wizard.js --java --spring-boot --api-service --name full-java-example --user my-github-handle --docker --db
+```
+
+Common follow-up commands (inside the generated project):
+
+```bash
+devbox run build
+devbox run dev
+docker compose up
+docker compose down
+```
+
 The default AI assistant is now `None` unless you select a different option interactively.
 
 ## Generated Output (varies by answers)

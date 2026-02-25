@@ -93,6 +93,12 @@ class ProjectWizard {
     let dbOverride = null;
     let githubUser = null;
     let javaFramework = null;
+    let cloudflareToken = null;
+    let cloudflareAccountId = null;
+    let includeWorkflows = null;
+    let cloudflareApp = null;
+    let cloudflareDist = null;
+    let cloudflareBuild = null;
 
     for (let i = 0; i < args.length; i += 1) {
       const arg = args[i];
@@ -195,6 +201,109 @@ class ProjectWizard {
         continue;
       }
 
+      if (key === 'cloudflare-token' || key === 'cloudflare-api-token') {
+        let value = rawValue;
+        if (!value) {
+          const next = args[i + 1];
+          if (next && !next.startsWith('-')) {
+            value = next;
+            i += 1;
+          }
+        }
+        if (!value) {
+          console.error('❌ Please provide a value after --cloudflare-token.');
+          process.exit(1);
+        }
+        cloudflareToken = value.trim();
+        continue;
+      }
+
+      if (key === 'cloudflare-account-id') {
+        let value = rawValue;
+        if (!value) {
+          const next = args[i + 1];
+          if (next && !next.startsWith('-')) {
+            value = next;
+            i += 1;
+          }
+        }
+        if (!value) {
+          console.error('❌ Please provide a value after --cloudflare-account-id.');
+          process.exit(1);
+        }
+        cloudflareAccountId = value.trim();
+        continue;
+      }
+
+      if (key === 'gh-actions') {
+        if (includeWorkflows === false) {
+          console.error('❌ Use only one of --gh-actions or --no-gh-actions.');
+          process.exit(1);
+        }
+        includeWorkflows = true;
+        continue;
+      }
+
+      if (key === 'no-gh-actions') {
+        if (includeWorkflows === true) {
+          console.error('❌ Use only one of --gh-actions or --no-gh-actions.');
+          process.exit(1);
+        }
+        includeWorkflows = false;
+        continue;
+      }
+
+      if (key === 'cloudflare-app') {
+        let value = rawValue;
+        if (!value) {
+          const next = args[i + 1];
+          if (next && !next.startsWith('-')) {
+            value = next;
+            i += 1;
+          }
+        }
+        if (!value) {
+          console.error('❌ Please provide a value after --cloudflare-app.');
+          process.exit(1);
+        }
+        cloudflareApp = value.trim();
+        continue;
+      }
+
+      if (key === 'cloudflare-dist') {
+        let value = rawValue;
+        if (!value) {
+          const next = args[i + 1];
+          if (next && !next.startsWith('-')) {
+            value = next;
+            i += 1;
+          }
+        }
+        if (!value) {
+          console.error('❌ Please provide a value after --cloudflare-dist.');
+          process.exit(1);
+        }
+        cloudflareDist = value.trim();
+        continue;
+      }
+
+      if (key === 'cloudflare-build') {
+        let value = rawValue;
+        if (!value) {
+          const next = args[i + 1];
+          if (next && !next.startsWith('-')) {
+            value = next;
+            i += 1;
+          }
+        }
+        if (!value) {
+          console.error('❌ Please provide a value after --cloudflare-build.');
+          process.exit(1);
+        }
+        cloudflareBuild = value.trim();
+        continue;
+      }
+
       flags.add(key);
     }
 
@@ -220,7 +329,10 @@ class ProjectWizard {
       showHelp: flags.has('help') || flags.has('h'),
       nonInteractive: presetFlags.length > 0 || projectTypeFlags.length > 0
         || projectName !== null || dockerOverride !== null || dbOverride !== null
-        || githubUser !== null || javaFramework !== null,
+        || githubUser !== null || javaFramework !== null
+        || cloudflareToken !== null || cloudflareAccountId !== null
+        || includeWorkflows !== null || cloudflareApp !== null
+        || cloudflareDist !== null || cloudflareBuild !== null,
       nxPreset: presetFlags.length ? PRESET_FLAG_MAP[presetFlags[0]].nxPreset : null,
       language: presetFlags.length ? PRESET_FLAG_MAP[presetFlags[0]].language : null,
       projectType: projectTypeFlags.length ? PROJECT_TYPE_FLAG_MAP[projectTypeFlags[0]] : null,
@@ -228,7 +340,13 @@ class ProjectWizard {
       dockerOverride,
       dbOverride,
       githubUser,
-      javaFramework
+      javaFramework,
+      cloudflareToken,
+      cloudflareAccountId,
+      includeWorkflows,
+      cloudflareApp,
+      cloudflareDist,
+      cloudflareBuild
     };
   }
 
@@ -278,6 +396,31 @@ class ProjectWizard {
       this.answers.githubUser = cliConfig.githubUser;
     }
 
+    if (cliConfig.cloudflareToken) {
+      this.answers.cloudflareApiToken = cliConfig.cloudflareToken;
+    }
+
+    if (cliConfig.cloudflareAccountId) {
+      this.answers.cloudflareAccountId = cliConfig.cloudflareAccountId;
+    }
+
+    this.answers.includeWorkflows = false;
+    if (typeof cliConfig.includeWorkflows === 'boolean') {
+      this.answers.includeWorkflows = cliConfig.includeWorkflows;
+    } else if (this.answers.cloudflareApiToken || this.answers.cloudflareAccountId) {
+      this.answers.includeWorkflows = true;
+    }
+
+    if (cliConfig.cloudflareApp) {
+      this.answers.cloudflareAppName = cliConfig.cloudflareApp;
+    }
+    if (cliConfig.cloudflareDist) {
+      this.answers.cloudflareDistPath = cliConfig.cloudflareDist;
+    }
+    if (cliConfig.cloudflareBuild) {
+      this.answers.cloudflareBuildCommand = cliConfig.cloudflareBuild;
+    }
+
     if (typeof cliConfig.dockerOverride === 'boolean') {
       this.answers.createDockerfile = cliConfig.dockerOverride;
     }
@@ -306,6 +449,18 @@ class ProjectWizard {
     } else if (!this.answers.createDockerfile && cliConfig.dbOverride) {
       console.warn('⚠️  Docker is disabled. Skipping --db.');
     }
+
+    if (this.answers.includeWorkflows) {
+      const defaultApp = this.answers.cloudflareAppName || this.answers.repoName || 'web-app';
+      const appName = defaultApp || 'web-app';
+      this.answers.cloudflareAppName = appName;
+      if (!this.answers.cloudflareDistPath) {
+        this.answers.cloudflareDistPath = `dist/apps/${appName}`;
+      }
+      if (!this.answers.cloudflareBuildCommand) {
+        this.answers.cloudflareBuildCommand = `pnpm nx build ${appName} --configuration=production`;
+      }
+    }
   }
 
   printHelp() {
@@ -328,6 +483,8 @@ class ProjectWizard {
     console.log('  node wizard.js --other');
     console.log('  node wizard.js --name my-project');
     console.log('  node wizard.js --user my-github-handle');
+    console.log('  node wizard.js --cloudflare-token $CLOUDFLARE_API_TOKEN');
+    console.log('  node wizard.js --cloudflare-account-id $CLOUDFLARE_ACCOUNT_ID');
     console.log('  node wizard.js --docker');
     console.log('  node wizard.js --no-docker');
     console.log('  node wizard.js --db');
@@ -577,6 +734,56 @@ class ProjectWizard {
       ''
     );
 
+    this.answers.cloudflareApiToken = await this.ask(
+      'Cloudflare API token for .env (leave blank to skip):',
+      null,
+      ''
+    );
+
+    this.answers.cloudflareAccountId = await this.ask(
+      'Cloudflare account ID for .env (leave blank to skip):',
+      null,
+      ''
+    );
+
+    const workflowDefault = (this.answers.cloudflareApiToken || this.answers.cloudflareAccountId) ? 'yes' : 'no';
+    this.answers.includeWorkflows = await this.askYesNo(
+      'Include GitHub Actions workflows for CI/CD and Cloudflare deploys?',
+      workflowDefault
+    );
+
+    if (this.answers.includeWorkflows) {
+      const defaultApp = this.answers.repoName || 'web-app';
+      const appAnswer = await this.ask(
+        'Primary Nx/Frontend app name to build for deploys:',
+        null,
+        defaultApp
+      );
+      this.answers.cloudflareAppName = (appAnswer || '').trim() || defaultApp;
+
+      const defaultDist = this.answers.useNx
+        ? `dist/apps/${this.answers.cloudflareAppName}/browser`
+        : `dist/${this.answers.cloudflareAppName}`;
+      const distAnswer = await this.ask(
+        'Production build output path for Cloudflare deploy:',
+        null,
+        defaultDist
+      );
+      this.answers.cloudflareDistPath = (distAnswer || '').trim() || defaultDist;
+
+      const defaultBuild = `pnpm nx build ${this.answers.cloudflareAppName} --configuration=production`;
+      const buildAnswer = await this.ask(
+        'Build command to run inside GitHub Actions:',
+        null,
+        defaultBuild
+      );
+      this.answers.cloudflareBuildCommand = (buildAnswer || '').trim() || defaultBuild;
+    } else {
+      this.answers.cloudflareAppName = null;
+      this.answers.cloudflareDistPath = null;
+      this.answers.cloudflareBuildCommand = null;
+    }
+
     this.answers.setupVersioning = await this.askYesNo(
       'Set up version tagging and release support?',
       'yes'
@@ -798,6 +1005,9 @@ class ProjectWizard {
 
   ensureProjectDirs(projectPath) {
     const dirs = ['scripts'];
+    if (this.answers.includeWorkflows) {
+      dirs.push(path.join('.github', 'workflows'));
+    }
     dirs.forEach(dir => {
       fs.mkdirSync(path.join(projectPath, dir), { recursive: true });
     });
@@ -844,6 +1054,10 @@ class ProjectWizard {
 
       // Generate requirements files if needed
       this.generateRequirementsFiles(projectPath);
+
+      if (this.answers.includeWorkflows) {
+        this.generateWorkflowFiles(projectPath);
+      }
 
       // Initialize Git
       if (this.answers.initGit) {
@@ -3281,25 +3495,87 @@ ${references ? '### References\n' + references : ''}
   }
 
   generateEnvFile(projectPath) {
+    const entries = [];
     const githubUser = (this.answers.githubUser || '').trim();
-    if (!githubUser) {
+    if (githubUser) {
+      entries.push(`GITHUB_USER=${githubUser}`);
+    }
+    const cfToken = (this.answers.cloudflareApiToken || '').trim();
+    if (cfToken) {
+      entries.push(`CLOUDFLARE_API_TOKEN=${cfToken}`);
+    }
+    const cfAccount = (this.answers.cloudflareAccountId || '').trim();
+    if (cfAccount) {
+      entries.push(`CLOUDFLARE_ACCOUNT_ID=${cfAccount}`);
+    }
+
+    if (!entries.length) {
       return;
     }
 
     const envPath = path.join(projectPath, '.env');
-    const entry = `GITHUB_USER=${githubUser}\n`;
+    const addEntries = (existing) => {
+      const missing = entries.filter((entry) => {
+        const key = entry.split('=')[0];
+        return !existing.includes(`${key}=`);
+      });
+      if (!missing.length) {
+        return existing;
+      }
+      const prefixNewline = existing.length > 0 && !existing.endsWith('\n');
+      const addition = `${prefixNewline ? '\n' : ''}${missing.join('\n')}\n`;
+      return `${existing}${addition}`;
+    };
 
     if (fs.existsSync(envPath)) {
       const existing = fs.readFileSync(envPath, 'utf8');
-      if (existing.includes('GITHUB_USER=')) {
-        return;
+      const updated = addEntries(existing);
+      if (updated !== existing) {
+        fs.writeFileSync(envPath, updated);
       }
-      const needsNewline = existing.length > 0 && !existing.endsWith('\n');
-      fs.appendFileSync(envPath, `${needsNewline ? '\n' : ''}${entry}`);
       return;
     }
 
-    fs.writeFileSync(envPath, entry);
+    fs.writeFileSync(envPath, `${entries.join('\n')}\n`);
+  }
+
+  generateWorkflowFiles(projectPath) {
+    const templateDir = path.join(__dirname, 'templates', 'workflows');
+    if (!fs.existsSync(templateDir)) {
+      console.warn('⚠️  Workflow templates directory not found. Skipping GitHub Actions generation.');
+      return;
+    }
+
+    const replacements = this.getWorkflowReplacements();
+    const workflowsDir = path.join(projectPath, '.github', 'workflows');
+    fs.mkdirSync(workflowsDir, { recursive: true });
+
+    const files = ['ci.yml', 'common_deploy.yaml', 'common_deploy_feature.yaml'];
+    files.forEach((file) => {
+      const templatePath = path.join(templateDir, file);
+      if (!fs.existsSync(templatePath)) {
+        console.warn(`⚠️  Missing workflow template: ${file}`);
+        return;
+      }
+      let content = fs.readFileSync(templatePath, 'utf8');
+      Object.entries(replacements).forEach(([token, value]) => {
+        const regex = new RegExp(`__${token}__`, 'g');
+        content = content.replace(regex, value);
+      });
+      fs.writeFileSync(path.join(workflowsDir, file), content);
+    });
+  }
+
+  getWorkflowReplacements() {
+    const repoName = this.answers.repoName || 'my-project';
+    const appName = this.answers.cloudflareAppName || repoName;
+    const distPath = this.answers.cloudflareDistPath || `dist/apps/${appName}`;
+    const buildCommand = this.answers.cloudflareBuildCommand || `pnpm nx build ${appName} --configuration=production`;
+    return {
+      CF_PROJECT: repoName,
+      CF_DIST_PATH: distPath,
+      NX_BUILD_CMD: buildCommand
+    };
   }
 
   initializeGit(projectPath) {

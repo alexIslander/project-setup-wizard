@@ -104,6 +104,8 @@ You can answer by typing the number (e.g., `1`) or the full text. Press Enter to
 - **Git Initialization**: Choose whether to initialize a Git repository locally
 - **README Generation**: Choose whether to generate README and contributing guidelines
 - **GitHub Username**: Optionally save your GitHub username to `.env` as `GITHUB_USER`
+- **Cloudflare Credentials**: Provide (optional) Cloudflare API token and Account ID so the wizard can write `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` to `.env`
+- **GitHub Actions Pack**: Decide whether to scaffold CI/CD workflows for Cloudflare deploys, then confirm the primary app name, build command, and dist output path
 - **Versioning**: Choose whether to set up version tagging and release support
 
 ### After the Wizard Completes
@@ -152,7 +154,12 @@ The wizard creates different files depending on your choices:
 - **`README.md`**: Project documentation with setup instructions
 
 ### If GitHub Username Provided
-- **`.env`**: Includes `GITHUB_USER` for local tooling
+- **`.env`**: Includes `GITHUB_USER` (and, when provided, `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`) for local tooling
+
+### If GitHub Actions Pack Selected
+- **`.github/workflows/ci.yml`**: Quality checks (install, lint, test, build)
+- **`.github/workflows/common_deploy.yaml`**: Production deploy to Cloudflare Pages on `main`
+- **`.github/workflows/common_deploy_feature.yaml`**: Preview deploys for feature branches / pull requests
 
 ### If Git Initialization Selected
 - **`.gitignore`**: Git ignore file with language-specific patterns
